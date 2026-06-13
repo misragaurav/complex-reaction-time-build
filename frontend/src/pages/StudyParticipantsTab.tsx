@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { errorMessage } from "../api/client";
 import { exportsApi } from "../api/exports";
+import { groupsApi } from "../api/groups";
 import { participantsApi } from "../api/participants";
 import { studiesApi } from "../api/studies";
-import type { ParticipantCreate, ParticipantOut, StudyOut, TaskType } from "../api/types";
+import type { GroupOut, ParticipantCreate, ParticipantOut, StudyOut, TaskType } from "../api/types";
 import { Button, ErrorBanner, Field, inputClass, selectClass, SuccessBanner } from "../components/forms";
 import { downloadBlob } from "../utils/download";
 
@@ -131,9 +132,13 @@ function AddParticipantsForm({
 function ParticipantRow({
   participant,
   onUpdated,
+  selected,
+  onToggleSelect,
 }: {
   participant: ParticipantOut;
   onUpdated: (participant: ParticipantOut) => void;
+  selected: boolean;
+  onToggleSelect: () => void;
 }): JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -182,7 +187,12 @@ function ParticipantRow({
   return (
     <>
       <tr className={participant.is_active ? "" : "opacity-50"}>
+        <td className="px-4 py-3">
+          <input type="checkbox" checked={selected} onChange={onToggleSelect} />
+        </td>
         <td className="px-4 py-3 font-mono text-sm text-gray-900">{participant.code}</td>
+        {/* MOD-4: group assignment. */}
+        <td className="px-4 py-3 text-sm text-gray-700">{participant.group_name ?? "Unassigned"}</td>
         <td className="px-4 py-3 text-sm text-gray-700">{participant.password_set ? "Set" : "Not set"}</td>
         <td className="px-4 py-3 text-sm text-gray-700">
           {participant.sessions_completed}/{participant.sessions_assigned}
@@ -207,7 +217,7 @@ function ParticipantRow({
       </tr>
       {(error || success) && (
         <tr>
-          <td colSpan={6} className="px-4 pb-3">
+          <td colSpan={8} className="px-4 pb-3">
             <ErrorBanner message={error} />
             <SuccessBanner message={success} />
           </td>
@@ -366,17 +376,65 @@ export default function StudyParticipantsTab({ study }: { study: StudyOut }): JS
   const [participants, setParticipants] = useState<ParticipantOut[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
+  // MOD-4: group assignment state.
+  const [groups, setGroups] = useState<GroupOut[]>([]);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [assignGroupId, setAssignGroupId] = useState("");
+  const [assignError, setAssignError] = useState<string | null>(null);
+  const [assignSuccess, setAssignSuccess] = useState<string | null>(null);
+  const [assigning, setAssigning] = useState(false);
 
   const refresh = useCallback(() => {
     participantsApi
       .list(study.id)
       .then(setParticipants)
       .catch((err: unknown) => setError(errorMessage(err)));
+    groupsApi
+      .list(study.id)
+      .then(setGroups)
+      .catch(() => {});
   }, [study.id]);
 
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  function toggleSelect(id: string): void {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function assignToGroup(): Promise<void> {
+    setAssignError(null);
+    setAssignSuccess(null);
+    if (assignGroupId === "") {
+      setAssignError("Select a group.");
+      return;
+    }
+    if (selected.size === 0) {
+      setAssignError("Select at least one participant.");
+      return;
+    }
+    setAssigning(true);
+    try {
+      const res = await groupsApi.assign(assignGroupId, { participant_ids: [...selected] });
+      const parts: string[] = [];
+      if (res.assigned.length) parts.push(`assigned ${res.assigned.length}`);
+      if (res.conflicts.length)
+        parts.push(`${res.conflicts.length} already in a group (unchanged)`);
+      setAssignSuccess(parts.join("; ") || "No changes.");
+      setSelected(new Set());
+      refresh();
+    } catch (err) {
+      setAssignError(errorMessage(err));
+    } finally {
+      setAssigning(false);
+    }
+  }
 
   async function downloadCsv(): Promise<void> {
     setError(null);
@@ -399,16 +457,56 @@ export default function StudyParticipantsTab({ study }: { study: StudyOut }): JS
         <p className="text-sm text-gray-500">No participants yet.</p>
       ) : (
         <div className="space-y-3">
-          <div className="flex justify-end">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            {/* MOD-4 / MFR-24: assign selected participants to a group. */}
+            <div className="flex flex-wrap items-end gap-2">
+              <Field label="Assign selected to group">
+                <select
+                  className={selectClass}
+                  value={assignGroupId}
+                  onChange={(e) => setAssignGroupId(e.target.value)}
+                >
+                  <option value="">Choose group…</option>
+                  {groups.map((g) => (
+                    <option key={g.id} value={g.id}>
+                      {g.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Button
+                variant="secondary"
+                onClick={() => void assignToGroup()}
+                loading={assigning}
+                disabled={selected.size === 0 || assignGroupId === ""}
+              >
+                Assign to group ({selected.size})
+              </Button>
+            </div>
             <Button variant="secondary" onClick={() => void downloadCsv()} loading={downloading}>
               Download codes CSV
             </Button>
           </div>
+          <ErrorBanner message={assignError} />
+          <SuccessBanner message={assignSuccess} />
+          {groups.length === 0 && (
+            <p className="text-sm text-gray-500">Create a group on the Groups tab to enable assignment.</p>
+          )}
           <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
             <table className="min-w-full divide-y divide-gray-200">
               <thead>
                 <tr className="text-left text-xs font-medium uppercase tracking-wide text-gray-500">
+                  <th className="px-4 py-3">
+                    <input
+                      type="checkbox"
+                      checked={selected.size === participants.length && participants.length > 0}
+                      onChange={(e) =>
+                        setSelected(e.target.checked ? new Set(participants.map((p) => p.id)) : new Set())
+                      }
+                    />
+                  </th>
                   <th className="px-4 py-3">Code</th>
+                  <th className="px-4 py-3">Group</th>
                   <th className="px-4 py-3">Password</th>
                   <th className="px-4 py-3">Sessions done</th>
                   <th className="px-4 py-3">Last activity</th>
@@ -421,6 +519,8 @@ export default function StudyParticipantsTab({ study }: { study: StudyOut }): JS
                   <ParticipantRow
                     key={p.id}
                     participant={p}
+                    selected={selected.has(p.id)}
+                    onToggleSelect={() => toggleSelect(p.id)}
                     onUpdated={(updated) =>
                       setParticipants((prev) => prev?.map((x) => (x.id === updated.id ? updated : x)) ?? prev)
                     }

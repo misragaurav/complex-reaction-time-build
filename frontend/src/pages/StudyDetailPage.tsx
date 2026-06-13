@@ -8,17 +8,20 @@ import { Button, ErrorBanner } from "../components/forms";
 import { downloadBlob } from "../utils/download";
 import StudyDashboardTab from "./StudyDashboardTab";
 import StudyDemographicsTab from "./StudyDemographicsTab";
+import StudyGroupsTab from "./StudyGroupsTab";
 import StudyParticipantsTab from "./StudyParticipantsTab";
 import StudySessionsTab from "./StudySessionsTab";
 import StudySettingsTab from "./StudySettingsTab";
 
-const TABS = ["settings", "demographics", "participants", "sessions", "dashboard"] as const;
+// MOD-4: "groups" tab added.
+const TABS = ["settings", "demographics", "participants", "groups", "sessions", "dashboard"] as const;
 type Tab = (typeof TABS)[number];
 
 const TAB_LABELS: Record<Tab, string> = {
   settings: "Settings",
   demographics: "Demographics",
   participants: "Participants",
+  groups: "Groups",
   sessions: "Sessions",
   dashboard: "Dashboard",
 };
@@ -110,6 +113,7 @@ function StudyDetail({ studyId }: { studyId: string }): JSX.Element {
       {tab === "settings" && <StudySettingsTab study={study} onChange={setStudy} />}
       {tab === "demographics" && <StudyDemographicsTab study={study} />}
       {tab === "participants" && <StudyParticipantsTab study={study} />}
+      {tab === "groups" && <StudyGroupsTab study={study} />}
       {tab === "sessions" && <StudySessionsTab study={study} />}
       {tab === "dashboard" && <StudyDashboardTab study={study} />}
     </div>

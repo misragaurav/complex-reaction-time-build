@@ -147,6 +147,10 @@ class Participant(Base):
     demographic_responses: Mapped[list["DemographicResponse"]] = relationship(
         back_populates="participant"
     )
+    # MOD-4: at most one group assignment per participant.
+    group_assignment: Mapped["ParticipantGroupAssignment | None"] = relationship(
+        back_populates="participant", uselist=False, cascade="all, delete-orphan"
+    )
 
 
 class DemographicField(Base):
@@ -353,3 +357,51 @@ class Trial(Base):
     )
 
     session: Mapped["Session"] = relationship(back_populates="trials")
+
+
+class Group(Base):
+    """MOD-4 `groups`: a named participant group within a study."""
+
+    __tablename__ = "groups"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=_uuid)
+    study_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("studies.id"), nullable=False)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    current_intervention_session: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("study_id", "name", name="uq_groups_study_name"),
+        CheckConstraint(
+            "current_intervention_session IS NULL OR current_intervention_session BETWEEN 1 AND 52",
+            name="ck_groups_current_intervention_session",
+        ),
+    )
+
+    assignments: Mapped[list["ParticipantGroupAssignment"]] = relationship(
+        back_populates="group", cascade="all, delete-orphan"
+    )
+
+
+class ParticipantGroupAssignment(Base):
+    """MOD-4 `participant_group_assignments`: one group per participant (the
+    UNIQUE on `participant_id` enforces it at the DB level)."""
+
+    __tablename__ = "participant_group_assignments"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=_uuid)
+    participant_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(), ForeignKey("participants.id"), nullable=False, unique=True
+    )
+    group_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("groups.id"), nullable=False)
+    assigned_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (Index("ix_pga_group", "group_id"),)
+
+    group: Mapped["Group"] = relationship(back_populates="assignments")
+    participant: Mapped["Participant"] = relationship(back_populates="group_assignment")

@@ -281,8 +281,64 @@ export interface ParticipantOut {
   is_active: boolean;
   sessions_assigned: number;
   sessions_completed: number;
+  // MOD-4: group assignment (null if unassigned).
+  group_id: string | null;
+  group_name: string | null;
   last_login_at: string | null;
   created_at: string;
+}
+
+// ---- groups.py (MOD-4) -------------------------------------------------------
+
+export interface GroupCreate {
+  name: string;
+  description?: string | null;
+}
+
+export interface GroupUpdate {
+  name?: string;
+  description?: string | null;
+  current_intervention_session?: number | null;
+}
+
+export interface GroupOut {
+  id: string;
+  study_id: string;
+  name: string;
+  description: string | null;
+  current_intervention_session: number | null;
+  member_count: number;
+  created_at: string;
+}
+
+export interface GroupMember {
+  participant_id: string;
+  code: string;
+  is_active: boolean;
+  sessions_assigned: number;
+  sessions_completed: number;
+}
+
+export interface GroupCompletionStats {
+  total_assigned: number;
+  completed_pre_overall: number;
+  completed_post_overall: number;
+  completed_pre_current: number;
+  completed_post_current: number;
+}
+
+export interface GroupDetailOut extends GroupOut {
+  members: GroupMember[];
+  completion: GroupCompletionStats;
+}
+
+export interface GroupAssignRequest {
+  participant_ids: string[];
+}
+
+export interface GroupAssignResponse {
+  assigned: { participant_id: string; code: string }[];
+  conflicts: { participant_id: string; code: string; current_group_name: string }[];
 }
 
 /** `{is_active?, reset_password?:true}` per API #13. */
