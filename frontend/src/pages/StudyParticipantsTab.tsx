@@ -1,0 +1,283 @@
+import { useEffect, useState, type FormEvent } from "react";
+import { errorMessage } from "../api/client";
+import { exportsApi } from "../api/exports";
+import { participantsApi } from "../api/participants";
+import type { ParticipantCreate, ParticipantOut, StudyOut } from "../api/types";
+import { Button, ErrorBanner, Field, inputClass, SuccessBanner } from "../components/forms";
+import { downloadBlob } from "../utils/download";
+
+const CUSTOM_CODE_RE = /^[A-Za-z0-9_-]{3,32}$/;
+
+function formatTimestamp(iso: string | null): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleString();
+}
+
+function AddParticipantsForm({
+  studyId,
+  onCreated,
+}: {
+  studyId: string;
+  onCreated: (created: ParticipantOut[]) => void;
+}): JSX.Element {
+  const [mode, setMode] = useState<"bulk" | "manual">("bulk");
+  const [count, setCount] = useState(10);
+  const [prefix, setPrefix] = useState("");
+  const [codesText, setCodesText] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [createdCodes, setCreatedCodes] = useState<string[] | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  async function handleSubmit(e: FormEvent): Promise<void> {
+    e.preventDefault();
+    setError(null);
+    setCreatedCodes(null);
+
+    let payload: ParticipantCreate;
+    if (mode === "bulk") {
+      if (!Number.isInteger(count) || count < 1 || count > 500) {
+        setError("Count must be between 1 and 500.");
+        return;
+      }
+      payload = prefix.trim() ? { count, prefix: prefix.trim() } : { count };
+    } else {
+      const codes = codesText
+        .split(/[\s,]+/)
+        .map((c) => c.trim())
+        .filter((c) => c !== "");
+      if (codes.length === 0) {
+        setError("Enter at least one code.");
+        return;
+      }
+      const bad = codes.find((c) => !CUSTOM_CODE_RE.test(c));
+      if (bad) {
+        setError(`Code "${bad}" is invalid: 3–32 characters, letters/digits/underscore/hyphen only.`);
+        return;
+      }
+      payload = { codes };
+    }
+
+    setSubmitting(true);
+    try {
+      const created = await participantsApi.create(studyId, payload);
+      onCreated(created);
+      setCreatedCodes(created.map((p) => p.code));
+      setCodesText("");
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4 rounded-lg border border-gray-200 bg-white p-4">
+      <h2 className="text-base font-semibold text-gray-900">Add participants</h2>
+      <div className="flex gap-4">
+        {(["bulk", "manual"] as const).map((m) => (
+          <label key={m} className="flex items-center gap-2 text-sm text-gray-700">
+            <input type="radio" name="participant-mode" checked={mode === m} onChange={() => setMode(m)} />
+            {m === "bulk" ? "Generate codes" : "Enter custom codes"}
+          </label>
+        ))}
+      </div>
+      <ErrorBanner message={error} />
+      {createdCodes && (
+        <div className="space-y-2">
+          <SuccessBanner
+            message={`Created ${createdCodes.length} participant${createdCodes.length === 1 ? "" : "s"}.`}
+          />
+          <div className="rounded border border-gray-200 bg-gray-50 px-3 py-2 font-mono text-sm text-gray-800">
+            {createdCodes.join(", ")}
+          </div>
+        </div>
+      )}
+      {mode === "bulk" ? (
+        <div className="flex flex-wrap gap-4">
+          <Field label="Count" hint="1–500">
+            <input
+              type="number"
+              className={inputClass}
+              min={1}
+              max={500}
+              value={count}
+              onChange={(e) => setCount(e.target.valueAsNumber || 0)}
+            />
+          </Field>
+          <Field label="Code prefix" hint="Optional, e.g. PILOT → PILOT-A7F3">
+            <input className={inputClass} value={prefix} onChange={(e) => setPrefix(e.target.value)} maxLength={20} />
+          </Field>
+        </div>
+      ) : (
+        <Field label="Codes" hint="Separate with spaces, commas, or new lines. 3–32 characters each: letters, digits, _ or -.">
+          <textarea className={inputClass} rows={3} value={codesText} onChange={(e) => setCodesText(e.target.value)} />
+        </Field>
+      )}
+      <Button type="submit" loading={submitting}>
+        Add participants
+      </Button>
+    </form>
+  );
+}
+
+function ParticipantRow({
+  participant,
+  onUpdated,
+}: {
+  participant: ParticipantOut;
+  onUpdated: (participant: ParticipantOut) => void;
+}): JSX.Element {
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function toggleActive(): Promise<void> {
+    setError(null);
+    setSuccess(null);
+    setBusy(true);
+    try {
+      onUpdated(await participantsApi.update(participant.id, { is_active: !participant.is_active }));
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function resetPassword(): Promise<void> {
+    setError(null);
+    setSuccess(null);
+    setBusy(true);
+    try {
+      onUpdated(await participantsApi.update(participant.id, { reset_password: true }));
+      setSuccess("Password cleared — the participant will set a new one at next login.");
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function exportCsv(): Promise<void> {
+    setError(null);
+    setSuccess(null);
+    setBusy(true);
+    try {
+      downloadBlob(await exportsApi.participantCsv(participant.id), `participant_${participant.code}.csv`);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <tr className={participant.is_active ? "" : "opacity-50"}>
+        <td className="px-4 py-3 font-mono text-sm text-gray-900">{participant.code}</td>
+        <td className="px-4 py-3 text-sm text-gray-700">{participant.password_set ? "Set" : "Not set"}</td>
+        <td className="px-4 py-3 text-sm text-gray-700">
+          {participant.sessions_completed}/{participant.sessions_assigned}
+        </td>
+        <td className="px-4 py-3 text-sm text-gray-700">{formatTimestamp(participant.last_login_at)}</td>
+        <td className="px-4 py-3 text-sm text-gray-700">{participant.is_active ? "Active" : "Deactivated"}</td>
+        <td className="px-4 py-3">
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => void exportCsv()} disabled={busy}>
+              Export CSV
+            </Button>
+            {participant.password_set && (
+              <Button variant="secondary" onClick={() => void resetPassword()} disabled={busy}>
+                Reset password
+              </Button>
+            )}
+            <Button variant={participant.is_active ? "danger" : "secondary"} onClick={() => void toggleActive()} disabled={busy}>
+              {participant.is_active ? "Deactivate" : "Reactivate"}
+            </Button>
+          </div>
+        </td>
+      </tr>
+      {(error || success) && (
+        <tr>
+          <td colSpan={6} className="px-4 pb-3">
+            <ErrorBanner message={error} />
+            <SuccessBanner message={success} />
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+export default function StudyParticipantsTab({ study }: { study: StudyOut }): JSX.Element {
+  const [participants, setParticipants] = useState<ParticipantOut[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState(false);
+
+  useEffect(() => {
+    participantsApi
+      .list(study.id)
+      .then(setParticipants)
+      .catch((err: unknown) => setError(errorMessage(err)));
+  }, [study.id]);
+
+  async function downloadCsv(): Promise<void> {
+    setError(null);
+    setDownloading(true);
+    try {
+      downloadBlob(await participantsApi.exportCodesCsv(study.id), "participants.csv");
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setDownloading(false);
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <ErrorBanner message={error} />
+      {!participants ? (
+        <p className="text-sm text-gray-500">Loading…</p>
+      ) : participants.length === 0 ? (
+        <p className="text-sm text-gray-500">No participants yet.</p>
+      ) : (
+        <div className="space-y-3">
+          <div className="flex justify-end">
+            <Button variant="secondary" onClick={() => void downloadCsv()} loading={downloading}>
+              Download codes CSV
+            </Button>
+          </div>
+          <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead>
+                <tr className="text-left text-xs font-medium uppercase tracking-wide text-gray-500">
+                  <th className="px-4 py-3">Code</th>
+                  <th className="px-4 py-3">Password</th>
+                  <th className="px-4 py-3">Sessions done</th>
+                  <th className="px-4 py-3">Last activity</th>
+                  <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {participants.map((p) => (
+                  <ParticipantRow
+                    key={p.id}
+                    participant={p}
+                    onUpdated={(updated) =>
+                      setParticipants((prev) => prev?.map((x) => (x.id === updated.id ? updated : x)) ?? prev)
+                    }
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+      <AddParticipantsForm
+        studyId={study.id}
+        onCreated={(created) => setParticipants((prev) => [...(prev ?? []), ...created])}
+      />
+    </div>
+  );
+}

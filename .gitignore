@@ -1,0 +1,38 @@
+# --- Environment ---
+.env
+.env.*
+!.env.example
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.venv/
+venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+*.db
+backend/dev.db
+
+# --- Node / Frontend ---
+node_modules/
+frontend/dist/
+frontend/.vite/
+coverage/
+*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts
+
+# --- Docker / OS ---
+.DS_Store
+*.log
+
+# --- Editors ---
+.vscode/
+.idea/
+
+# --- Claude Code local ---
+.claude/settings.local.json
+.claude/scheduled_tasks.lock

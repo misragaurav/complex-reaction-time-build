@@ -1,0 +1,29 @@
+# Development overlay: hot-reload for both api and web.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+#
+# - api runs uvicorn with --reload and bind-mounts ./backend
+# - web runs the Vite dev server (port 5173) with bind-mounted ./frontend,
+#   proxying /api to the api container
+services:
+  api:
+    volumes:
+      - ./backend/app:/app/app
+      - ./backend/alembic:/app/alembic
+      - ./backend/tests:/app/tests
+    command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"]
+
+  web:
+    build:
+      context: ./frontend
+      target: dev
+    environment:
+      VITE_PROXY_TARGET: http://api:8000
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/index.html:/app/index.html
+      - ./frontend/tests:/app/tests
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5173"]
+    ports:
+      - "5173:5173"

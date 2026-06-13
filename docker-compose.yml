@@ -1,0 +1,44 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-crt}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-crt}
+      POSTGRES_DB: ${POSTGRES_DB:-crt}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-crt} -d ${POSTGRES_DB:-crt}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./backend
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://crt:crt@db:5432/crt}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
+      APP_ENV: ${APP_ENV:-development}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+      REFRESH_TOKEN_EXPIRE_DAYS: ${REFRESH_TOKEN_EXPIRE_DAYS:-7}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:?ADMIN_EMAIL is required}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD is required}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./frontend
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  pgdata:
