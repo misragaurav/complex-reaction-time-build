@@ -12,25 +12,71 @@ const TASK_TYPE_LABELS: Record<TaskType, string> = {
   CRT4: "4-choice reaction time",
 };
 
+function TaskTypeSelect({
+  value,
+  onChange,
+}: {
+  value: TaskType;
+  onChange: (t: TaskType) => void;
+}): JSX.Element {
+  return (
+    <select className={selectClass} value={value} onChange={(e) => onChange(e.target.value as TaskType)}>
+      {(Object.keys(TASK_TYPE_LABELS) as TaskType[]).map((t) => (
+        <option key={t} value={t}>
+          {TASK_TYPE_LABELS[t]}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 function CreateStudyForm({ onCreated }: { onCreated: (study: StudyOut) => void }): JSX.Element {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [taskType, setTaskType] = useState<TaskType>("CRT2");
+  // MOD-3 protocol configuration.
+  const [numInterventionSessions, setNumInterventionSessions] = useState(24);
+  const [sessionsPerWeek, setSessionsPerWeek] = useState(3);
+  const [taskTypeOnboarding, setTaskTypeOnboarding] = useState<TaskType>("CRT4");
+  const [taskTypePre, setTaskTypePre] = useState<TaskType>("CRT4");
+  const [taskTypePost, setTaskTypePost] = useState<TaskType>("CRT4");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  const multipleOfError =
+    sessionsPerWeek > 0 && numInterventionSessions % sessionsPerWeek !== 0
+      ? `Intervention sessions (${numInterventionSessions}) must be a multiple of sessions per week (${sessionsPerWeek}).`
+      : null;
 
   async function handleSubmit(e: FormEvent): Promise<void> {
     e.preventDefault();
     setError(null);
+    if (multipleOfError) {
+      setError(multipleOfError);
+      return;
+    }
     setSubmitting(true);
     try {
-      const payload: StudyCreate = { name: name.trim(), task_type: taskType };
+      const payload: StudyCreate = {
+        name: name.trim(),
+        task_type: taskType,
+        num_intervention_sessions: numInterventionSessions,
+        sessions_per_week: sessionsPerWeek,
+        task_type_onboarding: taskTypeOnboarding,
+        task_type_pre: taskTypePre,
+        task_type_post: taskTypePost,
+      };
       if (description.trim()) payload.description = description.trim();
       const study = await studiesApi.create(payload);
       onCreated(study);
       setName("");
       setDescription("");
       setTaskType("CRT2");
+      setNumInterventionSessions(24);
+      setSessionsPerWeek(3);
+      setTaskTypeOnboarding("CRT4");
+      setTaskTypePre("CRT4");
+      setTaskTypePost("CRT4");
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -67,15 +113,47 @@ function CreateStudyForm({ onCreated }: { onCreated: (study: StudyOut) => void }
         label="Task type"
         hint="Determines the number of stimulus positions and default key mapping. Cannot be changed after creation. Parameters can be customized afterwards."
       >
-        <select className={selectClass} value={taskType} onChange={(e) => setTaskType(e.target.value as TaskType)}>
-          {(Object.keys(TASK_TYPE_LABELS) as TaskType[]).map((t) => (
-            <option key={t} value={t}>
-              {TASK_TYPE_LABELS[t]}
-            </option>
-          ))}
-        </select>
+        <TaskTypeSelect value={taskType} onChange={setTaskType} />
       </Field>
-      <Button type="submit" loading={submitting}>
+
+      {/* MOD-3: longitudinal protocol configuration. */}
+      <fieldset className="space-y-4 rounded border border-gray-200 p-3">
+        <legend className="px-1 text-sm font-semibold text-gray-700">Protocol</legend>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Field label="Intervention sessions" hint="1–156. Must be a multiple of sessions per week.">
+            <input
+              type="number"
+              className={inputClass}
+              min={1}
+              max={156}
+              value={numInterventionSessions}
+              onChange={(e) => setNumInterventionSessions(e.target.valueAsNumber || 0)}
+            />
+          </Field>
+          <Field label="Sessions per week" hint="1–7. Determines the week/day mapping.">
+            <input
+              type="number"
+              className={inputClass}
+              min={1}
+              max={7}
+              value={sessionsPerWeek}
+              onChange={(e) => setSessionsPerWeek(e.target.valueAsNumber || 0)}
+            />
+          </Field>
+          <Field label="Onboarding task type">
+            <TaskTypeSelect value={taskTypeOnboarding} onChange={setTaskTypeOnboarding} />
+          </Field>
+          <Field label="Pre task type">
+            <TaskTypeSelect value={taskTypePre} onChange={setTaskTypePre} />
+          </Field>
+          <Field label="Post task type">
+            <TaskTypeSelect value={taskTypePost} onChange={setTaskTypePost} />
+          </Field>
+        </div>
+        {multipleOfError && <p className="text-sm text-red-600">{multipleOfError}</p>}
+      </fieldset>
+
+      <Button type="submit" loading={submitting} disabled={multipleOfError !== null}>
         Create study
       </Button>
     </form>

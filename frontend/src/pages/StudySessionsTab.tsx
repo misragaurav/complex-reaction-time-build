@@ -218,6 +218,26 @@ function SessionRow({
 }): JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [editingLabel, setEditingLabel] = useState(false);
+  const [labelDraft, setLabelDraft] = useState(session.display_label);
+
+  // MOD-3 / MFR-14: relabel is allowed only before activation (and, once MOD-5
+  // adds it, after expiry — see the "expired" status added there).
+  const labelEditable = session.status === "created";
+
+  async function saveLabel(): Promise<void> {
+    setError(null);
+    setBusy(true);
+    try {
+      await sessionsApi.update(session.id, { display_label: labelDraft.trim() });
+      setEditingLabel(false);
+      onChanged();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function act(action: "reset" | "cancel"): Promise<void> {
     setError(null);
@@ -263,6 +283,49 @@ function SessionRow({
       <tr className={session.status === "cancelled" ? "opacity-50" : ""}>
         <td className="px-4 py-3 font-mono text-sm text-gray-900">{session.participant_code}</td>
         <td className="px-4 py-3 text-sm text-gray-700">{session.order_index}</td>
+        {/* MOD-3: display_label (inline-editable while created/expired) + session type. */}
+        <td className="px-4 py-3 text-sm text-gray-700">
+          {editingLabel ? (
+            <div className="flex items-center gap-1">
+              <input
+                className={`${inputClass} min-w-[10rem]`}
+                value={labelDraft}
+                maxLength={80}
+                onChange={(e) => setLabelDraft(e.target.value)}
+              />
+              <Button variant="secondary" onClick={() => void saveLabel()} disabled={busy || labelDraft.trim() === ""}>
+                Save
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setEditingLabel(false);
+                  setLabelDraft(session.display_label);
+                }}
+                disabled={busy}
+              >
+                Cancel
+              </Button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <span>{session.display_label}</span>
+              {labelEditable && (
+                <button
+                  type="button"
+                  className="text-xs text-gray-400 underline hover:text-gray-600"
+                  onClick={() => {
+                    setLabelDraft(session.display_label);
+                    setEditingLabel(true);
+                  }}
+                >
+                  Edit
+                </button>
+              )}
+            </div>
+          )}
+        </td>
+        <td className="px-4 py-3 text-sm capitalize text-gray-700">{session.session_type}</td>
         <td className="px-4 py-3 font-mono text-sm text-gray-700">{session.code}</td>
         <td className="px-4 py-3 text-sm text-gray-700">{session.task_type}</td>
         <td className="px-4 py-3">
@@ -303,7 +366,7 @@ function SessionRow({
       </tr>
       {error && (
         <tr>
-          <td colSpan={10} className="px-4 pb-3">
+          <td colSpan={12} className="px-4 pb-3">
             <ErrorBanner message={error} />
           </td>
         </tr>
@@ -394,6 +457,8 @@ export default function StudySessionsTab({ study }: { study: StudyOut }): JSX.El
               <tr className="text-left text-xs font-medium uppercase tracking-wide text-gray-500">
                 <th className="px-4 py-3">Participant</th>
                 <th className="px-4 py-3">#</th>
+                <th className="px-4 py-3">Label</th>
+                <th className="px-4 py-3">Type</th>
                 <th className="px-4 py-3">Code</th>
                 <th className="px-4 py-3">Task</th>
                 <th className="px-4 py-3">Status</th>

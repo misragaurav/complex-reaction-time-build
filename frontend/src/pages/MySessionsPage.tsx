@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { errorMessage } from "../api/client";
 import { sessionsApi } from "../api/sessions";
-import type { MySessionOut, SessionStatus, TaskType } from "../api/types";
+import type { MySessionOut, SessionStatus, SessionType, TaskType } from "../api/types";
 import { Button, ErrorBanner } from "../components/forms";
 
 const TASK_TYPE_LABELS: Record<TaskType, string> = {
@@ -10,6 +10,19 @@ const TASK_TYPE_LABELS: Record<TaskType, string> = {
   CRT2: "2-choice reaction time",
   CRT3: "3-choice reaction time",
   CRT4: "4-choice reaction time",
+};
+
+// MOD-3 / MFR-19: session-type chip colours.
+const SESSION_TYPE_LABELS: Record<SessionType, string> = {
+  onboarding: "Onboarding",
+  pre: "Pre",
+  post: "Post",
+};
+
+const SESSION_TYPE_CHIP_CLASSES: Record<SessionType, string> = {
+  onboarding: "bg-gray-100 text-gray-600",
+  pre: "bg-blue-100 text-blue-700",
+  post: "bg-green-100 text-green-700",
 };
 
 const STATUS_LABELS: Record<SessionStatus, string> = {
@@ -63,7 +76,14 @@ export default function MySessionsPage(): JSX.Element {
           {sessions.map((session) => (
             <li key={session.id} className="flex items-center justify-between gap-4 px-4 py-4">
               <div>
-                <p className="font-medium text-gray-900">Session {session.order_index}</p>
+                <div className="flex items-center gap-2">
+                  <p className="font-medium text-gray-900">{session.display_label}</p>
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-xs font-medium ${SESSION_TYPE_CHIP_CLASSES[session.session_type]}`}
+                  >
+                    {SESSION_TYPE_LABELS[session.session_type]}
+                  </span>
+                </div>
                 <p className="text-sm text-gray-500">{TASK_TYPE_LABELS[session.task_type]}</p>
               </div>
               <div className="flex items-center gap-3">

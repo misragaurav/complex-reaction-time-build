@@ -65,6 +65,22 @@ class Study(Base):
     description: Mapped[str | None] = mapped_column(Text(), nullable=True)
     task_type: Mapped[str] = mapped_column(String(10), nullable=False)
     params: Mapped[dict[str, Any]] = mapped_column(JSONVariant, nullable=False)
+    # MOD-3: longitudinal protocol configuration.
+    num_intervention_sessions: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=24, server_default="24"
+    )
+    sessions_per_week: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=3, server_default="3"
+    )
+    task_type_onboarding: Mapped[str] = mapped_column(
+        String(10), nullable=False, default="CRT4", server_default="CRT4"
+    )
+    task_type_pre: Mapped[str] = mapped_column(
+        String(10), nullable=False, default="CRT4", server_default="CRT4"
+    )
+    task_type_post: Mapped[str] = mapped_column(
+        String(10), nullable=False, default="CRT4", server_default="CRT4"
+    )
     created_by: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("users.id"), nullable=False)
     is_archived: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime.datetime] = mapped_column(
@@ -78,6 +94,21 @@ class Study(Base):
         CheckConstraint(
             "task_type IN ('SRT','CRT2','CRT3','CRT4')", name="ck_studies_task_type"
         ),  # MOD-2
+        # MOD-3 protocol config constraints.
+        CheckConstraint(
+            "num_intervention_sessions BETWEEN 1 AND 156",
+            name="ck_studies_num_intervention_sessions",
+        ),
+        CheckConstraint("sessions_per_week BETWEEN 1 AND 7", name="ck_studies_sessions_per_week"),
+        CheckConstraint(
+            "task_type_onboarding IN ('SRT','CRT2','CRT3','CRT4')", name="ck_studies_tt_onboarding"
+        ),
+        CheckConstraint(
+            "task_type_pre IN ('SRT','CRT2','CRT3','CRT4')", name="ck_studies_tt_pre"
+        ),
+        CheckConstraint(
+            "task_type_post IN ('SRT','CRT2','CRT3','CRT4')", name="ck_studies_tt_post"
+        ),
     )
 
     creator: Mapped["User"] = relationship(back_populates="studies")
@@ -214,6 +245,19 @@ class Session(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="created")
     attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     resume_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # MOD-3: session labelling / protocol fields.
+    session_type: Mapped[str] = mapped_column(
+        String(12), nullable=False, default="pre", server_default="pre"
+    )
+    intervention_session_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    week_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    day_within_week: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    display_label: Mapped[str] = mapped_column(
+        String(80), nullable=False, default="", server_default=""
+    )
+    display_label_overridden: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("0")
+    )
     client_env: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant, nullable=True)
     started_at: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
@@ -236,7 +280,28 @@ class Session(Base):
             "status IN ('created','in_progress','completed','abandoned','cancelled')",
             name="ck_sessions_status",
         ),
+        # MOD-3 labelling constraints.
+        CheckConstraint(
+            "session_type IN ('onboarding','pre','post')", name="ck_sessions_session_type"
+        ),
+        CheckConstraint(
+            "intervention_session_number IS NULL OR intervention_session_number BETWEEN 1 AND 156",
+            name="ck_sessions_intervention_number",
+        ),
+        CheckConstraint(
+            "week_number IS NULL OR week_number >= 1", name="ck_sessions_week_number"
+        ),
+        CheckConstraint(
+            "day_within_week IS NULL OR day_within_week BETWEEN 1 AND 7",
+            name="ck_sessions_day_within_week",
+        ),
         UniqueConstraint("participant_id", "order_index", name="uq_sessions_participant_order"),
+        Index(
+            "ix_sessions_protocol",
+            "study_id",
+            "session_type",
+            "intervention_session_number",
+        ),
     )
 
     participant: Mapped["Participant"] = relationship(back_populates="sessions")
