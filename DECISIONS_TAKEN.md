@@ -83,3 +83,58 @@ consistent with Appendix A" rule.
 13. **Researcher/admin password minimum is 8 characters.** The PRD fixes the
     participant minimum at 6 (FR-3) but is silent for staff accounts; 8 was
     chosen and is enforced by the API and both account forms.
+
+## v2 Modifications (MOD-1 … MOD-5)
+
+These continue the numbering and record assumptions made while implementing
+`04_Modifications_PRD.md`. Each also appears in that PRD's "Decisions &
+Defaults" appendix; the cross-reference (Dn / D-MOD6) is given.
+
+14. **SRT uses a dedicated singular instructions template (MOD-2, MFR-10).**
+    The §5.3 template ("you will see {N} crosses … press the key that matches
+    the position") is ungrammatical/meaningless for N=1, so `default_params`
+    swaps in a singular template ("you will see a cross … press {KEYS} as
+    quickly as you can when the box appears") for `task_type='SRT'`.
+    (`backend/app/task_defaults.py`)
+
+15. **SRT key-map cardinality reuses the existing length check (MOD-2,
+    MFR-8).** `TaskParams` already enforces `len(key_map) == TASK_POSITIONS[
+    task_type]`; adding `TASK_POSITIONS['SRT'] = 1` makes "exactly one key for
+    SRT, else 422" fall out with no new branch. The single-key map also makes
+    `outcome='incorrect'` structurally impossible, so no change to the trial
+    outcome recomputation was needed. (`backend/app/schemas/common.py`)
+
+16. **Protocol-config lock keyed on onboarding-session existence (MOD-3,
+    MFR-12 / PRD D4).** The five protocol fields lock once
+    `generate-protocol` has run. Since ad-hoc sessions (API #15) are always
+    typed `'pre'` (decision 17), the presence of an `'onboarding'` session is
+    a clean, unambiguous signal that generation has occurred.
+    (`backend/app/routers/studies.py::_protocol_locked`)
+
+17. **Ad-hoc sessions (#15) default to `session_type='pre'` with a derived
+    label (MOD-3, PRD D1).** MOD-3 makes `session_type`/`display_label` NOT
+    NULL, but the pre-existing manual session-assignment endpoint has no
+    protocol position. It sets `session_type='pre'`,
+    `intervention_session_number=order_index`, derives week/day from
+    `order_index`, and labels them `"Session {order_index}"` — all
+    researcher-editable afterwards.
+    (`backend/app/services/protocol.py::ad_hoc_label_fields`)
+
+18. **`display_label` editing reuses `PATCH /sessions/{id}` (MOD-3, PRD D5).**
+    The action body now accepts exactly one of `{action}` or
+    `{display_label}`. Relabel is permitted only while status is
+    `created`/`expired`; otherwise 409. Setting it flips
+    `display_label_overridden=true`. (`backend/app/routers/sessions.py`)
+
+19. **MOD-3 migration emits CHECK constraints on PostgreSQL only.** SQLite
+    cannot `ALTER ADD CONSTRAINT` without a full table rebuild, and SQLite
+    dev/test schemas are built from the models via `create_all` (which include
+    the constraints). The production target (Postgres) gets the full set.
+    (`backend/alembic/versions/0003_mod3_protocol_and_labels.py`)
+
+20. **`week_number` is constrained `>= 1` with no upper bound (MOD-3).** The
+    source PRD lists `week_number` as 1–52 but also allows
+    `num_intervention_sessions` up to 156 with `sessions_per_week` as low as 1
+    — which generates week numbers far above 52. The lower-bound-only CHECK
+    resolves that inconsistency without rejecting valid generated protocols.
+    (`backend/app/models.py`)

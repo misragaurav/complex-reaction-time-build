@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 
 from app.database import SessionLocal
 from app.models import Session as SessionModel
-from tests.helpers import correct_trial, invalid_trial, make_trial, post_trials, run_to_completion
+from tests.helpers import activate_session, correct_trial, invalid_trial, make_trial, post_trials, run_to_completion
 
 
 def _parse_csv_rows(text: str) -> list[dict[str, str]]:
@@ -53,13 +53,14 @@ def test_start_unowned_session_returns_404(
     assert resp.status_code == 404
 
 
-def test_start_enforces_session_order_lock(
+def test_start_requires_activated_status(
     client: TestClient,
     researcher_headers: dict[str, str],
     study: dict[str, Any],
     participant: dict[str, Any],
     participant_headers: dict[str, str],
 ) -> None:
+    """MOD-5: a session must be activated before it can be started (replaces order lock)."""
     resp = client.post(
         f"/api/v1/studies/{study['id']}/sessions",
         json={
@@ -73,16 +74,30 @@ def test_start_enforces_session_order_lock(
     sessions = sorted(resp.json(), key=lambda s: s["order_index"])
     session1, session2 = sessions
 
-    # Session 2 cannot start while session 1 is still "created".
-    resp2 = client.post(f"/api/v1/sessions/{session2['id']}/start", headers=participant_headers)
-    assert resp2.status_code == 409
+    # Neither session is activated yet → 403 for both.
+    resp2 = client.post(f"/api/v1/sessions/{session1['id']}/start", headers=participant_headers)
+    assert resp2.status_code == 403
+
+    resp2b = client.post(f"/api/v1/sessions/{session2['id']}/start", headers=participant_headers)
+    assert resp2b.status_code == 403
+
+    # Activate session1; it can now be started.
+    act_resp = client.post(f"/api/v1/sessions/{session1['id']}/activate", headers=researcher_headers)
+    assert act_resp.status_code == 200
 
     run_to_completion(
         client, participant_headers, session1["id"], practice_trials=1, test_trials=2
     )
 
+    # Session2 is still unactivated → still 403.
     resp3 = client.post(f"/api/v1/sessions/{session2['id']}/start", headers=participant_headers)
-    assert resp3.status_code == 200, resp3.text
+    assert resp3.status_code == 403
+
+    # Activate session2; now it can be started.
+    act_resp2 = client.post(f"/api/v1/sessions/{session2['id']}/activate", headers=researcher_headers)
+    assert act_resp2.status_code == 200
+    resp4 = client.post(f"/api/v1/sessions/{session2['id']}/start", headers=participant_headers)
+    assert resp4.status_code == 200, resp4.text
 
 
 def test_trial_outcome_recomputation_and_outlier_flag(
@@ -332,6 +347,8 @@ def test_complete_with_invalid_trial_requeue_arithmetic(
     assert resp4.status_code == 201, resp4.text
     requeue_session = resp4.json()[0]
 
+    # MOD-5: activate before starting.
+    activate_session(client, researcher_headers, requeue_session["id"])
     resp5 = client.post(f"/api/v1/sessions/{requeue_session['id']}/start", headers=requeue_headers)
     assert resp5.status_code == 200, resp5.text
 
@@ -456,6 +473,8 @@ def test_demographics_due_once_field_only_for_first_session(
     sessions = sorted(resp5.json(), key=lambda s: s["order_index"])
     session1, session2 = sessions
 
+    # MOD-5: activate session1 before starting.
+    activate_session(client, researcher_headers, session1["id"])
     resp6 = client.post(f"/api/v1/sessions/{session1['id']}/start", headers=headers)
     assert resp6.status_code == 200, resp6.text
     assert [f["id"] for f in resp6.json()["demographics_due"]] == [field["id"]]
@@ -467,8 +486,11 @@ def test_demographics_due_once_field_only_for_first_session(
     )
     assert resp7.status_code == 204, resp7.text
 
-    run_to_completion(client, headers, session1["id"], practice_trials=0, test_trials=1)
+    # Session1 is already in_progress; skip_start so we don't call start again.
+    run_to_completion(client, headers, session1["id"], practice_trials=0, test_trials=1, skip_start=True)
 
+    # MOD-5: activate session2 before starting.
+    activate_session(client, researcher_headers, session2["id"])
     resp8 = client.post(f"/api/v1/sessions/{session2['id']}/start", headers=headers)
     assert resp8.status_code == 200, resp8.text
     assert resp8.json()["demographics_due"] == []

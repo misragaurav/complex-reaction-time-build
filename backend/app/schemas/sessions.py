@@ -6,10 +6,13 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from pydantic import model_validator
+
 from app.schemas.common import TaskParams, TaskType
 from app.schemas.demographics import DemographicFieldPublic
 
-SessionStatus = Literal["created", "in_progress", "completed", "abandoned", "cancelled"]
+SessionStatus = Literal["created", "activated", "in_progress", "completed", "abandoned", "expired", "cancelled"]  # MOD-5
+SessionType = Literal["onboarding", "pre", "post"]  # MOD-3
 
 
 class SessionOverrides(BaseModel):
@@ -49,19 +52,37 @@ class SessionOut(BaseModel):
     status: SessionStatus
     attempt: int
     resume_count: int
+    # MOD-3 labelling fields.
+    session_type: SessionType
+    intervention_session_number: int | None
+    week_number: int | None
+    day_within_week: int | None
+    display_label: str
+    display_label_overridden: bool
     started_at: datetime.datetime | None
     completed_at: datetime.datetime | None
     last_activity_at: datetime.datetime | None
+    activated_at: datetime.datetime | None  # MOD-5
+    expired_at: datetime.datetime | None  # MOD-5
     created_at: datetime.datetime
     stats: SessionStatsBrief
 
 
 class SessionActionRequest(BaseModel):
-    """`{action: "reset" | "cancel"}` per API #17 (FR-22/23)."""
+    """`{action: "reset" | "cancel"}` per API #17 (FR-22/23), extended by MOD-3
+    to also accept `{display_label: "..."}` to relabel a session (MFR-14)."""
 
     model_config = ConfigDict(extra="forbid")
 
-    action: Literal["reset", "cancel"]
+    action: Literal["reset", "cancel"] | None = None
+    display_label: str | None = Field(default=None, min_length=1, max_length=80)
+
+    @model_validator(mode="after")
+    def _exactly_one(self) -> "SessionActionRequest":
+        provided = [self.action is not None, self.display_label is not None]
+        if sum(provided) != 1:
+            raise ValueError("provide exactly one of 'action' or 'display_label'")
+        return self
 
 
 class MySessionOut(BaseModel):
@@ -73,9 +94,44 @@ class MySessionOut(BaseModel):
     task_type: TaskType
     status: SessionStatus
     attempt: int
+    # MOD-3 labelling (MFR-19).
+    session_type: SessionType
+    display_label: str
     started_at: datetime.datetime | None
     completed_at: datetime.datetime | None
+    activated_at: datetime.datetime | None  # MOD-5
+    expired_at: datetime.datetime | None  # MOD-5
     locked: bool
+
+
+class GenerateProtocolRequest(BaseModel):
+    """`POST /studies/{id}/generate-protocol` (API #33, MFR-18)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    participant_ids: list[uuid.UUID] | None = None
+    num_intervention_sessions: int | None = Field(default=None, ge=1, le=156)
+    week_start: int = Field(default=1, ge=1, le=52)
+    task_type_onboarding: TaskType | None = None
+    task_type_pre: TaskType | None = None
+    task_type_post: TaskType | None = None
+
+
+class ProtocolCreatedItem(BaseModel):
+    participant_id: uuid.UUID
+    code: str
+    session_count: int
+
+
+class ProtocolSkippedItem(BaseModel):
+    participant_id: uuid.UUID
+    code: str
+    reason: str
+
+
+class GenerateProtocolResponse(BaseModel):
+    created: list[ProtocolCreatedItem]
+    skipped: list[ProtocolSkippedItem]
 
 
 class StoredTrials(BaseModel):

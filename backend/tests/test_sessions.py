@@ -286,6 +286,7 @@ def test_my_sessions_lock_state(
     participant: dict[str, Any],
     participant_headers: dict[str, str],
 ) -> None:
+    """MOD-5: locked is always False; status drives participant gating."""
     resp = client.post(
         f"/api/v1/studies/{study['id']}/sessions",
         json={"participant_ids": [participant["id"]], "count": 2},
@@ -298,5 +299,7 @@ def test_my_sessions_lock_state(
     sessions = sorted(resp2.json(), key=lambda s: s["order_index"])
     assert sessions[0]["order_index"] == 1
     assert sessions[0]["locked"] is False
+    assert sessions[0]["status"] == "created"
     assert sessions[1]["order_index"] == 2
-    assert sessions[1]["locked"] is True
+    assert sessions[1]["locked"] is False  # MOD-5: always False; status is authoritative
+    assert sessions[1]["status"] == "created"

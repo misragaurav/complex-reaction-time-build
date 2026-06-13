@@ -45,9 +45,11 @@ const PALETTE = [
 
 const STATUS_LABELS: Record<SessionStatus, string> = {
   created: "Not started",
+  activated: "Ready",
   in_progress: "In progress",
   completed: "Completed",
   abandoned: "Abandoned",
+  expired: "Missed",
   cancelled: "Cancelled",
 };
 

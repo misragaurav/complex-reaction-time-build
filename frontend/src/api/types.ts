@@ -3,7 +3,7 @@
 
 // ---- common.py --------------------------------------------------------------
 
-export type TaskType = "CRT2" | "CRT3" | "CRT4";
+export type TaskType = "SRT" | "CRT2" | "CRT3" | "CRT4"; // MOD-2: SRT added
 
 export interface TaskParams {
   task_type: TaskType;
@@ -108,11 +108,26 @@ export interface UserOut {
 
 // ---- studies.py ---------------------------------------------------------------
 
+// MOD-3 protocol configuration (shared by create/update/out).
+export interface ProtocolConfig {
+  num_intervention_sessions: number;
+  sessions_per_week: number;
+  task_type_onboarding: TaskType;
+  task_type_pre: TaskType;
+  task_type_post: TaskType;
+}
+
 export interface StudyCreate {
   name: string;
   description?: string | null;
   task_type: TaskType;
   params?: TaskParamsInput | null;
+  // MOD-3 (optional; server-defaulted to 24 / 3 / CRT4×3).
+  num_intervention_sessions?: number;
+  sessions_per_week?: number;
+  task_type_onboarding?: TaskType;
+  task_type_pre?: TaskType;
+  task_type_post?: TaskType;
 }
 
 export interface StudyUpdate {
@@ -120,6 +135,12 @@ export interface StudyUpdate {
   description?: string | null;
   params?: TaskParamsInput | null;
   is_archived?: boolean;
+  // MOD-3 (subject to the post-generation lock).
+  num_intervention_sessions?: number;
+  sessions_per_week?: number;
+  task_type_onboarding?: TaskType;
+  task_type_pre?: TaskType;
+  task_type_post?: TaskType;
 }
 
 export interface StudyCounts {
@@ -135,12 +156,46 @@ export interface StudyOut {
   description: string | null;
   task_type: TaskType;
   params: TaskParams;
+  // MOD-3 protocol configuration.
+  num_intervention_sessions: number;
+  sessions_per_week: number;
+  task_type_onboarding: TaskType;
+  task_type_pre: TaskType;
+  task_type_post: TaskType;
+  protocol_locked: boolean;
   created_by: string;
   is_archived: boolean;
   params_locked: boolean;
   counts: StudyCounts;
   created_at: string;
   updated_at: string;
+}
+
+// MOD-3 protocol generation (API #33).
+export interface GenerateProtocolRequest {
+  participant_ids?: string[];
+  num_intervention_sessions?: number;
+  week_start?: number;
+  task_type_onboarding?: TaskType;
+  task_type_pre?: TaskType;
+  task_type_post?: TaskType;
+}
+
+export interface ProtocolCreatedItem {
+  participant_id: string;
+  code: string;
+  session_count: number;
+}
+
+export interface ProtocolSkippedItem {
+  participant_id: string;
+  code: string;
+  reason: string;
+}
+
+export interface GenerateProtocolResponse {
+  created: ProtocolCreatedItem[];
+  skipped: ProtocolSkippedItem[];
 }
 
 // ---- demographics.py -----------------------------------------------------------
@@ -226,8 +281,102 @@ export interface ParticipantOut {
   is_active: boolean;
   sessions_assigned: number;
   sessions_completed: number;
+  // MOD-4: group assignment (null if unassigned).
+  group_id: string | null;
+  group_name: string | null;
   last_login_at: string | null;
   created_at: string;
+}
+
+// ---- groups.py (MOD-4) -------------------------------------------------------
+
+export interface GroupCreate {
+  name: string;
+  description?: string | null;
+}
+
+export interface GroupUpdate {
+  name?: string;
+  description?: string | null;
+  current_intervention_session?: number | null;
+}
+
+export interface GroupOut {
+  id: string;
+  study_id: string;
+  name: string;
+  description: string | null;
+  current_intervention_session: number | null;
+  member_count: number;
+  created_at: string;
+}
+
+export interface GroupMember {
+  participant_id: string;
+  code: string;
+  is_active: boolean;
+  sessions_assigned: number;
+  sessions_completed: number;
+}
+
+export interface GroupCompletionStats {
+  total_assigned: number;
+  completed_pre_overall: number;
+  completed_post_overall: number;
+  completed_pre_current: number;
+  completed_post_current: number;
+}
+
+export interface GroupDetailOut extends GroupOut {
+  members: GroupMember[];
+  completion: GroupCompletionStats;
+}
+
+export interface GroupAssignRequest {
+  participant_ids: string[];
+}
+
+export interface GroupAssignResponse {
+  assigned: { participant_id: string; code: string }[];
+  conflicts: { participant_id: string; code: string; current_group_name: string }[];
+}
+
+// MOD-5: group activation/deactivation types (MFR-31/32).
+export interface GroupActivatedItem {
+  participant_id: string;
+  code: string;
+  session_id: string;
+  display_label: string;
+  session_type: string;
+  order_index: number;
+}
+
+export interface GroupActivateResponse {
+  activated: GroupActivatedItem[];
+}
+
+export interface BlockingItem {
+  participant_id: string;
+  code: string;
+  session_id: string;
+  status: string;
+  display_label: string;
+}
+
+export interface GroupDeactivateRequest {
+  force?: boolean;
+}
+
+export interface GroupExpiredItem {
+  participant_id: string;
+  code: string;
+  session_id: string;
+  display_label: string;
+}
+
+export interface GroupDeactivateResponse {
+  expired: GroupExpiredItem[];
+  in_progress_count: number;
 }
 
 /** `{is_active?, reset_password?:true}` per API #13. */
@@ -238,7 +387,7 @@ export interface ParticipantUpdate {
 
 // ---- sessions.py ----------------------------------------------------------------
 
-export type SessionStatus = "created" | "in_progress" | "completed" | "abandoned" | "cancelled";
+export type SessionStatus = "created" | "activated" | "in_progress" | "completed" | "abandoned" | "expired" | "cancelled"; // MOD-5
 
 export interface SessionOverrides {
   task_type?: TaskType;
@@ -259,6 +408,8 @@ export interface SessionStatsBrief {
   n_outliers_flagged: number;
 }
 
+export type SessionType = "onboarding" | "pre" | "post"; // MOD-3
+
 export interface SessionOut {
   id: string;
   code: string;
@@ -271,16 +422,27 @@ export interface SessionOut {
   status: SessionStatus;
   attempt: number;
   resume_count: number;
+  // MOD-3 labelling fields.
+  session_type: SessionType;
+  intervention_session_number: number | null;
+  week_number: number | null;
+  day_within_week: number | null;
+  display_label: string;
+  display_label_overridden: boolean;
   started_at: string | null;
   completed_at: string | null;
   last_activity_at: string | null;
+  activated_at: string | null; // MOD-5
+  expired_at: string | null; // MOD-5
   created_at: string;
   stats: SessionStatsBrief;
 }
 
-/** `{action: "reset" | "cancel"}` per API #17 (FR-22/23). */
+/** `{action: "reset" | "cancel"}` per API #17 (FR-22/23); MOD-3 adds the
+ * `{display_label}` relabel variant. */
 export interface SessionActionRequest {
-  action: "reset" | "cancel";
+  action?: "reset" | "cancel";
+  display_label?: string;
 }
 
 export type SessionSortField =
@@ -302,8 +464,13 @@ export interface MySessionOut {
   task_type: TaskType;
   status: SessionStatus;
   attempt: number;
+  // MOD-3 labelling (MFR-19).
+  session_type: SessionType;
+  display_label: string;
   started_at: string | null;
   completed_at: string | null;
+  activated_at: string | null; // MOD-5
+  expired_at: string | null; // MOD-5
   locked: boolean;
 }
 

@@ -140,4 +140,8 @@ def session(
     )
     assert resp.status_code == 201, resp.text
     data: list[dict[str, Any]] = resp.json()
-    return data[0]
+    s = data[0]
+    # MOD-5: activate immediately so tests can call /start without an extra step.
+    resp2 = client.post(f"/api/v1/sessions/{s['id']}/activate", headers=researcher_headers)
+    assert resp2.status_code == 200, resp2.text
+    return resp2.json()  # return the updated session with status="activated"

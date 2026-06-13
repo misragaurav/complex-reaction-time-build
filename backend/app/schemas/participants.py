@@ -55,6 +55,9 @@ class ParticipantOut(BaseModel):
     is_active: bool
     sessions_assigned: int
     sessions_completed: int
+    # MOD-4: group assignment (null if unassigned).
+    group_id: uuid.UUID | None
+    group_name: str | None
     last_login_at: datetime.datetime | None
     created_at: datetime.datetime
 

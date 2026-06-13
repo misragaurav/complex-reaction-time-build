@@ -3,6 +3,7 @@ import { errorMessage } from "../api/client";
 import { exportsApi } from "../api/exports";
 import { participantsApi } from "../api/participants";
 import { sessionsApi } from "../api/sessions";
+// MOD-5: per-session activate/deactivate helpers imported via sessionsApi.
 import type {
   ParticipantOut,
   SessionCreateRequest,
@@ -19,6 +20,7 @@ import { DEFAULT_KEY_MAPS } from "../task/keymap";
 import { downloadBlob } from "../utils/download";
 
 const TASK_TYPE_LABELS: Record<TaskType, string> = {
+  SRT: "Simple reaction time", // MOD-2
   CRT2: "2-choice reaction time",
   CRT3: "3-choice reaction time",
   CRT4: "4-choice reaction time",
@@ -26,17 +28,21 @@ const TASK_TYPE_LABELS: Record<TaskType, string> = {
 
 const STATUS_LABELS: Record<SessionStatus, string> = {
   created: "Not started",
+  activated: "Ready",
   in_progress: "In progress",
   completed: "Completed",
   abandoned: "Abandoned",
+  expired: "Missed",
   cancelled: "Cancelled",
 };
 
 const STATUS_BADGE_CLASSES: Record<SessionStatus, string> = {
   created: "bg-gray-100 text-gray-600",
+  activated: "bg-green-100 text-green-700",
   in_progress: "bg-blue-100 text-blue-700",
   completed: "bg-green-100 text-green-700",
   abandoned: "bg-amber-100 text-amber-700",
+  expired: "bg-red-100 text-red-600",
   cancelled: "bg-gray-100 text-gray-400",
 };
 
@@ -217,6 +223,25 @@ function SessionRow({
 }): JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [editingLabel, setEditingLabel] = useState(false);
+  const [labelDraft, setLabelDraft] = useState(session.display_label);
+
+  // MOD-3 / MFR-14 / MOD-5: relabel allowed before activation or after expiry.
+  const labelEditable = session.status === "created" || session.status === "expired";
+
+  async function saveLabel(): Promise<void> {
+    setError(null);
+    setBusy(true);
+    try {
+      await sessionsApi.update(session.id, { display_label: labelDraft.trim() });
+      setEditingLabel(false);
+      onChanged();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function act(action: "reset" | "cancel"): Promise<void> {
     setError(null);
@@ -254,6 +279,31 @@ function SessionRow({
     }
   }
 
+  // MOD-5: per-session activate/deactivate (MFR-33).
+  async function activateSession(): Promise<void> {
+    setError(null);
+    setBusy(true);
+    try {
+      await sessionsApi.activate(session.id);
+      onChanged();
+    } catch (err) {
+      setError(errorMessage(err));
+      setBusy(false);
+    }
+  }
+
+  async function deactivateSession(): Promise<void> {
+    setError(null);
+    setBusy(true);
+    try {
+      await sessionsApi.deactivate(session.id);
+      onChanged();
+    } catch (err) {
+      setError(errorMessage(err));
+      setBusy(false);
+    }
+  }
+
   const resettable =
     session.status === "in_progress" || session.status === "completed" || session.status === "abandoned";
 
@@ -262,6 +312,49 @@ function SessionRow({
       <tr className={session.status === "cancelled" ? "opacity-50" : ""}>
         <td className="px-4 py-3 font-mono text-sm text-gray-900">{session.participant_code}</td>
         <td className="px-4 py-3 text-sm text-gray-700">{session.order_index}</td>
+        {/* MOD-3: display_label (inline-editable while created/expired) + session type. */}
+        <td className="px-4 py-3 text-sm text-gray-700">
+          {editingLabel ? (
+            <div className="flex items-center gap-1">
+              <input
+                className={`${inputClass} min-w-[10rem]`}
+                value={labelDraft}
+                maxLength={80}
+                onChange={(e) => setLabelDraft(e.target.value)}
+              />
+              <Button variant="secondary" onClick={() => void saveLabel()} disabled={busy || labelDraft.trim() === ""}>
+                Save
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setEditingLabel(false);
+                  setLabelDraft(session.display_label);
+                }}
+                disabled={busy}
+              >
+                Cancel
+              </Button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <span>{session.display_label}</span>
+              {labelEditable && (
+                <button
+                  type="button"
+                  className="text-xs text-gray-400 underline hover:text-gray-600"
+                  onClick={() => {
+                    setLabelDraft(session.display_label);
+                    setEditingLabel(true);
+                  }}
+                >
+                  Edit
+                </button>
+              )}
+            </div>
+          )}
+        </td>
+        <td className="px-4 py-3 text-sm capitalize text-gray-700">{session.session_type}</td>
         <td className="px-4 py-3 font-mono text-sm text-gray-700">{session.code}</td>
         <td className="px-4 py-3 text-sm text-gray-700">{session.task_type}</td>
         <td className="px-4 py-3">
@@ -270,6 +363,7 @@ function SessionRow({
           </span>
         </td>
         <td className="px-4 py-3 text-sm text-gray-700">{session.attempt}</td>
+        <td className="px-4 py-3 text-sm text-gray-700">{formatTimestamp(session.activated_at)}</td>
         <td className="px-4 py-3 text-sm text-gray-700">{formatTimestamp(session.completed_at)}</td>
         <td className="px-4 py-3 text-sm text-gray-700">
           {session.stats.trimmed_mean_rt_ms !== null ? `${session.stats.trimmed_mean_rt_ms.toFixed(1)} ms` : "—"}
@@ -287,22 +381,34 @@ function SessionRow({
                 Reset
               </Button>
             )}
+            {/* MOD-5: activate / deactivate per-session. */}
+            {(session.status === "created" || session.status === "expired") && (
+              <Button variant="secondary" onClick={() => void activateSession()} disabled={busy}>
+                Activate
+              </Button>
+            )}
+            {session.status === "activated" && (
+              <Button variant="secondary" onClick={() => void deactivateSession()} disabled={busy}>
+                Deactivate
+              </Button>
+            )}
+            {/* Cancel allowed for created, activated, and expired (MOD-5). */}
+            {(session.status === "created" || session.status === "activated" || session.status === "expired") && (
+              <Button variant="secondary" onClick={() => void act("cancel")} disabled={busy}>
+                Cancel
+              </Button>
+            )}
             {session.status === "created" && (
-              <>
-                <Button variant="secondary" onClick={() => void act("cancel")} disabled={busy}>
-                  Cancel
-                </Button>
-                <Button variant="danger" onClick={() => void remove()} disabled={busy}>
-                  Delete
-                </Button>
-              </>
+              <Button variant="danger" onClick={() => void remove()} disabled={busy}>
+                Delete
+              </Button>
             )}
           </div>
         </td>
       </tr>
       {error && (
         <tr>
-          <td colSpan={10} className="px-4 pb-3">
+          <td colSpan={13} className="px-4 pb-3">
             <ErrorBanner message={error} />
           </td>
         </tr>
@@ -393,10 +499,13 @@ export default function StudySessionsTab({ study }: { study: StudyOut }): JSX.El
               <tr className="text-left text-xs font-medium uppercase tracking-wide text-gray-500">
                 <th className="px-4 py-3">Participant</th>
                 <th className="px-4 py-3">#</th>
+                <th className="px-4 py-3">Label</th>
+                <th className="px-4 py-3">Type</th>
                 <th className="px-4 py-3">Code</th>
                 <th className="px-4 py-3">Task</th>
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Attempt</th>
+                <th className="px-4 py-3">Activated</th>
                 <th className="px-4 py-3">Completed</th>
                 <th className="px-4 py-3">Trimmed mean RT</th>
                 <th className="px-4 py-3">Accuracy</th>

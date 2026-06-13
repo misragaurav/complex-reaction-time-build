@@ -8,7 +8,8 @@ from fastapi import APIRouter, HTTPException, Response, status
 from sqlalchemy import select
 
 from app.deps import CurrentUserDep, DbDep
-from app.models import DemographicField, DemographicResponse, Participant, Study, Trial
+from app.models import DemographicField, DemographicResponse, Group, Participant, Study, Trial
+from app.models import ParticipantGroupAssignment
 from app.models import Session as SessionModel
 from app.schemas.common import TaskParams
 from app.schemas.sessions import PreviewResponse
@@ -35,6 +36,16 @@ def _session_trials(db: DbDep, session_id: uuid.UUID) -> list[Trial]:
     )
 
 
+def _group_name_for(db: DbDep, participant_id: uuid.UUID) -> str:
+    """MOD-4 / MFR-26: the participant's assigned group name, or '' if none."""
+    name = db.execute(
+        select(Group.name)
+        .join(ParticipantGroupAssignment, ParticipantGroupAssignment.group_id == Group.id)
+        .where(ParticipantGroupAssignment.participant_id == participant_id)
+    ).scalar_one_or_none()
+    return name or ""
+
+
 @router.get("/sessions/{session_id}/export.csv")
 def export_session_csv(session_id: uuid.UUID, user: CurrentUserDep, db: DbDep) -> Response:
     session = db.get(SessionModel, session_id)
@@ -43,8 +54,11 @@ def export_session_csv(session_id: uuid.UUID, user: CurrentUserDep, db: DbDep) -
 
     participant = session.participant
     study = session.study
+    group_name = _group_name_for(db, participant.id)
     trials = sorted(_session_trials(db, session.id), key=trial_sort_key)
-    csv_text = build_csv(TRIAL_COLUMNS, [trial_row(study, participant, session, t) for t in trials])
+    csv_text = build_csv(
+        TRIAL_COLUMNS, [trial_row(study, participant, session, t, group_name) for t in trials]
+    )
     filename = csv_filename(study.name, f"session_{session.code}")
     return Response(content=csv_text, media_type="text/csv", headers=content_disposition(filename))
 
@@ -56,10 +70,11 @@ def export_participant_csv(participant_id: uuid.UUID, user: CurrentUserDep, db: 
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Participant not found")
 
     study = participant.study
+    group_name = _group_name_for(db, participant.id)
     rows = []
     for session in participant.sessions:
         for trial in sorted(_session_trials(db, session.id), key=trial_sort_key):
-            rows.append(trial_row(study, participant, session, trial))
+            rows.append(trial_row(study, participant, session, trial, group_name))
 
     csv_text = build_csv(TRIAL_COLUMNS, rows)
     filename = csv_filename(study.name, f"participant_{participant.code}")
@@ -78,19 +93,33 @@ def export_study_zip(study_id: uuid.UUID, user: CurrentUserDep, db: DbDep) -> Re
         .all()
     )
 
+    # MOD-4 / MFR-26: participant_id -> group name (one query for the study).
+    group_names: dict[uuid.UUID, str] = {
+        pid: name
+        for pid, name in db.execute(
+            select(ParticipantGroupAssignment.participant_id, Group.name)
+            .join(Group, Group.id == ParticipantGroupAssignment.group_id)
+            .join(Participant, Participant.id == ParticipantGroupAssignment.participant_id)
+            .where(Participant.study_id == study_id)
+        ).all()
+    }
+
     # trials.csv -- every trial row, all attempts, practice + test (FR-54).
     trial_rows = []
     for participant in participants:
+        gname = group_names.get(participant.id, "")
         for session in participant.sessions:
             for trial in sorted(_session_trials(db, session.id), key=trial_sort_key):
-                trial_rows.append(trial_row(study, participant, session, trial))
+                trial_rows.append(trial_row(study, participant, session, trial, gname))
     trials_csv = build_csv(TRIAL_COLUMNS, trial_rows)
 
     # sessions_summary.csv -- FR-47 stats (current attempt) for every non-cancelled session.
     all_sessions = [s for p in participants for s in p.sessions if s.status != "cancelled"]
     trials_by_session = load_test_trials(db, all_sessions)
     session_rows = [
-        session_summary_row(p, s, compute_session_summary(s, trials_by_session[s.id]))
+        session_summary_row(
+            p, s, compute_session_summary(s, trials_by_session[s.id]), group_names.get(p.id, "")
+        )
         for p in participants
         for s in p.sessions
         if s.status != "cancelled"
@@ -98,7 +127,10 @@ def export_study_zip(study_id: uuid.UUID, user: CurrentUserDep, db: DbDep) -> Re
     sessions_csv = build_csv(SESSION_SUMMARY_COLUMNS, session_rows)
 
     # participants_summary.csv -- FR-48 cross-session aggregates.
-    participant_rows = [participant_summary_row(compute_participant_summary(db, p)) for p in participants]
+    participant_rows = [
+        participant_summary_row(compute_participant_summary(db, p), group_names.get(p.id, ""))
+        for p in participants
+    ]
     participants_csv = build_csv(PARTICIPANT_SUMMARY_COLUMNS, participant_rows)
 
     # demographics.csv -- FR-56, one row per answered instance.
