@@ -135,7 +135,8 @@ function TaskRunner({ sessionId }: { sessionId: string }): JSX.Element {
     case "blocked-device":
       return (
         <CenteredScreen>
-          <p className="text-base text-gray-800">{DEVICE_BLOCKED_MESSAGE}</p>
+          {/* MOD-1: instructional text >= 20px */}
+          <p className="text-xl text-gray-800">{DEVICE_BLOCKED_MESSAGE}</p>
           <Button variant="secondary" onClick={() => navigate("/login")}>
             Back to login
           </Button>
@@ -165,8 +166,9 @@ function TaskRunner({ sessionId }: { sessionId: string }): JSX.Element {
       if (!params) return <CenteredScreen>{null}</CenteredScreen>;
       return (
         <CenteredScreen>
-          <h1 className="text-xl font-semibold text-gray-900">Instructions</h1>
-          <p className="text-base leading-relaxed text-gray-800">{renderInstructions(params.instructions_text, params)}</p>
+          <h1 className="text-2xl font-semibold text-gray-900">Instructions</h1>
+          {/* MOD-1: instructional text >= 20px */}
+          <p className="text-xl leading-relaxed text-gray-800">{renderInstructions(params.instructions_text, params)}</p>
           <KeyMappingDiagram keyMap={params.key_map} />
           <Button onClick={actions.startPractice}>Start practice</Button>
         </CenteredScreen>
@@ -193,7 +195,8 @@ function TaskRunner({ sessionId }: { sessionId: string }): JSX.Element {
           {state.pendingReentry && (
             <div className="fixed inset-0 z-10 flex items-center justify-center bg-white/90">
               <div className="space-y-4 text-center">
-                <p className="text-lg text-gray-900">Press Continue to re-enter fullscreen</p>
+                {/* MOD-1: instructional text >= 20px */}
+                <p className="text-xl text-gray-900">Press Continue to re-enter fullscreen</p>
                 <Button onClick={actions.reenterFullscreen}>Continue</Button>
               </div>
             </div>
@@ -205,7 +208,8 @@ function TaskRunner({ sessionId }: { sessionId: string }): JSX.Element {
     case "interstitial":
       return (
         <CenteredScreen>
-          <p className="text-lg text-gray-900">
+          {/* MOD-1: interstitial text >= 20px */}
+          <p className="text-xl text-gray-900">
             Practice complete. The real test starts now. Respond as quickly and as accurately as you can.
           </p>
           <Button onClick={actions.startTest}>Start test</Button>
@@ -215,14 +219,16 @@ function TaskRunner({ sessionId }: { sessionId: string }): JSX.Element {
     case "completing":
       return (
         <CenteredScreen>
-          <p className="text-lg text-gray-900">Submitting your results…</p>
+          {/* MOD-1: completion text >= 20px */}
+          <p className="text-xl text-gray-900">Submitting your results…</p>
         </CenteredScreen>
       );
 
     case "completed":
       return (
         <CenteredScreen>
-          <p className="text-lg text-gray-900">Session complete. Thank you!</p>
+          {/* MOD-1: completion text >= 20px */}
+          <p className="text-xl text-gray-900">Session complete. Thank you!</p>
           <Button onClick={() => navigate("/me")}>Back to my sessions</Button>
         </CenteredScreen>
       );

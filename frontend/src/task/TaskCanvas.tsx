@@ -2,11 +2,11 @@ import { keyLabel } from "./keymap";
 import type { BlockProgress } from "./sessionRunner";
 import type { EngineSnapshot, FeedbackKind } from "./trialEngine";
 
-const CONTAINER_SIZE = 96;
-const GAP = 48;
-const CROSS_ARM = 28; // each side of center -> 56px total
-const BOX_SIZE = 64;
-const STROKE = 6;
+const CONTAINER_SIZE = 128; // MOD-1
+const GAP = 64; // MOD-1
+const CROSS_ARM = 40; // MOD-1: each side of center -> 80px total
+const BOX_SIZE = 88; // MOD-1
+const STROKE = 8; // MOD-1
 const BLACK = "#000000";
 
 function StimulusGlyph({ showBox }: { showBox: boolean }): JSX.Element {
@@ -47,9 +47,10 @@ interface TaskCanvasProps {
 }
 
 /**
- * §5.1 trial canvas: white background, N 96x96px stimulus containers with
- * 48px gaps, a feedback zone 64px below, and a thin progress bar at the
- * bottom of the viewport. Used for practice/test blocks and (FR-33) preview.
+ * §5.1 trial canvas (geometry per MOD-1): white background, N 128x128px
+ * stimulus containers with 64px gaps, a feedback zone 64px below, and a thin
+ * progress bar at the bottom of the viewport. Used for practice/test blocks
+ * and (FR-33) preview.
  */
 export default function TaskCanvas({ nPositions, snapshot, showProgress, progress }: TaskCanvasProps): JSX.Element {
   const boxPosition = snapshot?.boxPosition ?? null;
@@ -66,9 +67,9 @@ export default function TaskCanvas({ nPositions, snapshot, showProgress, progres
         </div>
         <div style={{ marginTop: "64px", height: "56px", display: "flex", alignItems: "center", justifyContent: "center" }}>
           {feedback === "incorrect" ? (
-            <span style={{ color: "#CC0000", fontSize: "48px", lineHeight: 1 }}>{FEEDBACK_TEXT.incorrect}</span>
+            <span style={{ color: "#CC0000", fontSize: "40px", lineHeight: 1 }}>{FEEDBACK_TEXT.incorrect}</span>
           ) : feedback ? (
-            <span style={{ color: BLACK, fontSize: "32px", lineHeight: 1 }}>{FEEDBACK_TEXT[feedback]}</span>
+            <span style={{ color: BLACK, fontSize: "40px", lineHeight: 1 }}>{FEEDBACK_TEXT[feedback]}</span>
           ) : null}
         </div>
       </div>
@@ -90,7 +91,21 @@ export function KeyMappingDiagram({ keyMap }: { keyMap: string[] }): JSX.Element
       {keyMap.map((code) => (
         <div key={code} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "8px" }}>
           <StimulusGlyph showBox={false} />
-          <span className="text-lg font-semibold text-gray-700">{keyLabel(code)}</span>
+          {/* MOD-1: 18px monospace key-cap (1px border, 4px padding, 4px radius). */}
+          <span
+            style={{
+              fontSize: "18px",
+              fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+              fontWeight: 600,
+              color: "#374151",
+              border: "1px solid #374151",
+              padding: "4px",
+              borderRadius: "4px",
+              lineHeight: 1,
+            }}
+          >
+            {keyLabel(code)}
+          </span>
         </div>
       ))}
     </div>
