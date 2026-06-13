@@ -3,6 +3,7 @@ import { errorMessage } from "../api/client";
 import { exportsApi } from "../api/exports";
 import { participantsApi } from "../api/participants";
 import { sessionsApi } from "../api/sessions";
+// MOD-5: per-session activate/deactivate helpers imported via sessionsApi.
 import type {
   ParticipantOut,
   SessionCreateRequest,
@@ -27,17 +28,21 @@ const TASK_TYPE_LABELS: Record<TaskType, string> = {
 
 const STATUS_LABELS: Record<SessionStatus, string> = {
   created: "Not started",
+  activated: "Ready",
   in_progress: "In progress",
   completed: "Completed",
   abandoned: "Abandoned",
+  expired: "Missed",
   cancelled: "Cancelled",
 };
 
 const STATUS_BADGE_CLASSES: Record<SessionStatus, string> = {
   created: "bg-gray-100 text-gray-600",
+  activated: "bg-green-100 text-green-700",
   in_progress: "bg-blue-100 text-blue-700",
   completed: "bg-green-100 text-green-700",
   abandoned: "bg-amber-100 text-amber-700",
+  expired: "bg-red-100 text-red-600",
   cancelled: "bg-gray-100 text-gray-400",
 };
 
@@ -221,9 +226,8 @@ function SessionRow({
   const [editingLabel, setEditingLabel] = useState(false);
   const [labelDraft, setLabelDraft] = useState(session.display_label);
 
-  // MOD-3 / MFR-14: relabel is allowed only before activation (and, once MOD-5
-  // adds it, after expiry — see the "expired" status added there).
-  const labelEditable = session.status === "created";
+  // MOD-3 / MFR-14 / MOD-5: relabel allowed before activation or after expiry.
+  const labelEditable = session.status === "created" || session.status === "expired";
 
   async function saveLabel(): Promise<void> {
     setError(null);
@@ -271,6 +275,31 @@ function SessionRow({
     } catch (err) {
       setError(errorMessage(err));
     } finally {
+      setBusy(false);
+    }
+  }
+
+  // MOD-5: per-session activate/deactivate (MFR-33).
+  async function activateSession(): Promise<void> {
+    setError(null);
+    setBusy(true);
+    try {
+      await sessionsApi.activate(session.id);
+      onChanged();
+    } catch (err) {
+      setError(errorMessage(err));
+      setBusy(false);
+    }
+  }
+
+  async function deactivateSession(): Promise<void> {
+    setError(null);
+    setBusy(true);
+    try {
+      await sessionsApi.deactivate(session.id);
+      onChanged();
+    } catch (err) {
+      setError(errorMessage(err));
       setBusy(false);
     }
   }
@@ -334,6 +363,7 @@ function SessionRow({
           </span>
         </td>
         <td className="px-4 py-3 text-sm text-gray-700">{session.attempt}</td>
+        <td className="px-4 py-3 text-sm text-gray-700">{formatTimestamp(session.activated_at)}</td>
         <td className="px-4 py-3 text-sm text-gray-700">{formatTimestamp(session.completed_at)}</td>
         <td className="px-4 py-3 text-sm text-gray-700">
           {session.stats.trimmed_mean_rt_ms !== null ? `${session.stats.trimmed_mean_rt_ms.toFixed(1)} ms` : "—"}
@@ -351,22 +381,34 @@ function SessionRow({
                 Reset
               </Button>
             )}
+            {/* MOD-5: activate / deactivate per-session. */}
+            {(session.status === "created" || session.status === "expired") && (
+              <Button variant="secondary" onClick={() => void activateSession()} disabled={busy}>
+                Activate
+              </Button>
+            )}
+            {session.status === "activated" && (
+              <Button variant="secondary" onClick={() => void deactivateSession()} disabled={busy}>
+                Deactivate
+              </Button>
+            )}
+            {/* Cancel allowed for created, activated, and expired (MOD-5). */}
+            {(session.status === "created" || session.status === "activated" || session.status === "expired") && (
+              <Button variant="secondary" onClick={() => void act("cancel")} disabled={busy}>
+                Cancel
+              </Button>
+            )}
             {session.status === "created" && (
-              <>
-                <Button variant="secondary" onClick={() => void act("cancel")} disabled={busy}>
-                  Cancel
-                </Button>
-                <Button variant="danger" onClick={() => void remove()} disabled={busy}>
-                  Delete
-                </Button>
-              </>
+              <Button variant="danger" onClick={() => void remove()} disabled={busy}>
+                Delete
+              </Button>
             )}
           </div>
         </td>
       </tr>
       {error && (
         <tr>
-          <td colSpan={12} className="px-4 pb-3">
+          <td colSpan={13} className="px-4 pb-3">
             <ErrorBanner message={error} />
           </td>
         </tr>
@@ -463,6 +505,7 @@ export default function StudySessionsTab({ study }: { study: StudyOut }): JSX.El
                 <th className="px-4 py-3">Task</th>
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Attempt</th>
+                <th className="px-4 py-3">Activated</th>
                 <th className="px-4 py-3">Completed</th>
                 <th className="px-4 py-3">Trimmed mean RT</th>
                 <th className="px-4 py-3">Accuracy</th>

@@ -1,8 +1,11 @@
 import { api } from "./client";
 import type {
+  GroupActivateResponse,
   GroupAssignRequest,
   GroupAssignResponse,
   GroupCreate,
+  GroupDeactivateRequest,
+  GroupDeactivateResponse,
   GroupDetailOut,
   GroupOut,
   GroupUpdate,
@@ -19,4 +22,11 @@ export const groupsApi = {
   remove: (groupId: string): Promise<void> => api.delete<void>(`/groups/${groupId}`),
   assign: (groupId: string, payload: GroupAssignRequest): Promise<GroupAssignResponse> =>
     api.post<GroupAssignResponse>(`/groups/${groupId}/assign`, payload),
+  // MOD-5: group-level activation (MFR-31/32).
+  activate: (groupId: string): Promise<GroupActivateResponse> =>
+    api.post<GroupActivateResponse>(`/groups/${groupId}/activate`, {}),
+  deactivate: (groupId: string, force = false): Promise<GroupDeactivateResponse> =>
+    api.post<GroupDeactivateResponse>(`/groups/${groupId}/deactivate`, {
+      force,
+    } satisfies GroupDeactivateRequest),
 };

@@ -74,3 +74,44 @@ class ConflictItem(BaseModel):
 class GroupAssignResponse(BaseModel):
     assigned: list[AssignedItem]
     conflicts: list[ConflictItem]
+
+
+# MOD-5: group activation/deactivation schemas (MFR-31/32).
+
+class GroupActivatedItem(BaseModel):
+    participant_id: uuid.UUID
+    code: str
+    session_id: uuid.UUID
+    display_label: str
+    session_type: str
+    order_index: int
+
+
+class GroupActivateResponse(BaseModel):
+    activated: list[GroupActivatedItem]
+
+
+class BlockingItem(BaseModel):
+    participant_id: uuid.UUID
+    code: str
+    session_id: uuid.UUID
+    status: str
+    display_label: str
+
+
+class GroupDeactivateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    force: bool = False
+
+
+class GroupExpiredItem(BaseModel):
+    participant_id: uuid.UUID
+    code: str
+    session_id: uuid.UUID
+    display_label: str
+
+
+class GroupDeactivateResponse(BaseModel):
+    expired: list[GroupExpiredItem]
+    in_progress_count: int

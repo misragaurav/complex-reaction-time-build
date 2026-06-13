@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { errorMessage } from "../api/client";
 import { groupsApi } from "../api/groups";
-import type { GroupDetailOut, GroupOut, StudyOut } from "../api/types";
+import type { GroupDeactivateResponse, GroupDetailOut, GroupOut, StudyOut } from "../api/types";
 import { Button, ErrorBanner, Field, inputClass, SuccessBanner } from "../components/forms";
 
 const SIZE_WARNING = "Groups are recommended to have 4–6 participants.";
@@ -105,6 +105,40 @@ function GroupDetailPanel({
     }
   }
 
+  // MOD-5: group-level session open/close (MFR-31/32).
+  async function openSession(): Promise<void> {
+    setError(null);
+    setSuccess(null);
+    setBusy(true);
+    try {
+      const res = await groupsApi.activate(groupId);
+      setSuccess(`Activated ${res.activated.length} session(s) for IS ${detail?.current_intervention_session ?? "?"}.`);
+      load();
+      onChanged();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function closeSession(force = false): Promise<void> {
+    setError(null);
+    setSuccess(null);
+    setBusy(true);
+    try {
+      const res: GroupDeactivateResponse = await groupsApi.deactivate(groupId, force);
+      const msg = `Expired ${res.expired.length} session(s).${res.in_progress_count > 0 ? ` ${res.in_progress_count} in-progress session(s) were left running.` : ""}`;
+      setSuccess(msg);
+      load();
+      onChanged();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (!detail) {
     return <ErrorBanner message={error} />;
   }
@@ -151,6 +185,21 @@ function GroupDetailPanel({
           +1
         </Button>
       </div>
+
+      {/* MOD-5 / MFR-31/32: open/close current session slot for all members. */}
+      {cis != null && (
+        <div className="flex flex-wrap gap-2">
+          <Button variant="secondary" disabled={busy} onClick={() => void openSession()}>
+            Open session (IS {cis})
+          </Button>
+          <Button variant="secondary" disabled={busy} onClick={() => void closeSession(false)}>
+            Close session
+          </Button>
+          <Button variant="secondary" disabled={busy} onClick={() => void closeSession(true)}>
+            Force close
+          </Button>
+        </div>
+      )}
 
       {/* MFR-25: per-group completion counts. */}
       <div className="grid grid-cols-2 gap-2 text-sm text-gray-700 sm:grid-cols-3">

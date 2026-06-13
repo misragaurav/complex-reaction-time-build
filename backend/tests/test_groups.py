@@ -246,7 +246,9 @@ def _create_completed(
         headers=headers,
     )
     sessions = resp.json()
+    # MOD-5: activate before starting; pass researcher headers so run_to_completion activates.
     run_to_completion(
-        client, p_headers, sessions[0]["id"], practice_trials=0, test_trials=3
+        client, p_headers, sessions[0]["id"], practice_trials=0, test_trials=3,
+        researcher_headers=headers,
     )
     return study, parts[0], sessions, p_headers

@@ -20,7 +20,6 @@ from app.schemas.sessions import SessionStartResponse, StoredTrials
 from app.schemas.trials import ClientEnvIn, TrialBatchRequest, TrialBatchResponse, TrialIn
 from app.services.sessions import (
     demographics_due_for_session,
-    earlier_incomplete_session,
     get_owned_session,
     resume_state,
 )
@@ -46,24 +45,21 @@ def start_session(
 ) -> SessionStartResponse:
     session = get_owned_session(db, participant, session_id)
 
-    earlier = earlier_incomplete_session(db, participant.id, session.order_index)
-    if earlier is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="An earlier session must be completed first",
-        )
-    if session.status == "completed":
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Session already completed")
-
-    now = _now()
-    if session.status == "created":
+    # MOD-5: initial start requires activated; in_progress allows resume (page refresh).
+    if session.status == "activated":
+        now = _now()
         session.status = "in_progress"
         session.started_at = now
-    else:
-        # Resuming an in_progress (e.g. page refresh) or abandoned session.
+        session.last_activity_at = now
+    elif session.status == "in_progress":
+        # Resume after page refresh — bump counter but leave started_at unchanged.
         session.resume_count += 1
-        session.status = "in_progress"
-    session.last_activity_at = now
+        session.last_activity_at = _now()
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Session is not activated (status={session.status!r})",
+        )
     db.commit()
     db.refresh(session)
 

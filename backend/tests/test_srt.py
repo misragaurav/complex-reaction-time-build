@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 
 from app.task_defaults import default_params, render_instructions
 
-from .helpers import make_trial, post_trials
+from .helpers import activate_session, make_trial, post_trials
 
 SRT_KEY_MAP = ["Space"]
 
@@ -63,6 +63,8 @@ def _make_participant_session(
     )
     assert resp3.status_code == 201, resp3.text
     session = resp3.json()[0]
+    # MOD-5: activate so the participant can start.
+    activate_session(client, headers, session["id"])
     return session, p_headers
 
 

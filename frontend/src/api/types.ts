@@ -341,6 +341,44 @@ export interface GroupAssignResponse {
   conflicts: { participant_id: string; code: string; current_group_name: string }[];
 }
 
+// MOD-5: group activation/deactivation types (MFR-31/32).
+export interface GroupActivatedItem {
+  participant_id: string;
+  code: string;
+  session_id: string;
+  display_label: string;
+  session_type: string;
+  order_index: number;
+}
+
+export interface GroupActivateResponse {
+  activated: GroupActivatedItem[];
+}
+
+export interface BlockingItem {
+  participant_id: string;
+  code: string;
+  session_id: string;
+  status: string;
+  display_label: string;
+}
+
+export interface GroupDeactivateRequest {
+  force?: boolean;
+}
+
+export interface GroupExpiredItem {
+  participant_id: string;
+  code: string;
+  session_id: string;
+  display_label: string;
+}
+
+export interface GroupDeactivateResponse {
+  expired: GroupExpiredItem[];
+  in_progress_count: number;
+}
+
 /** `{is_active?, reset_password?:true}` per API #13. */
 export interface ParticipantUpdate {
   is_active?: boolean;
@@ -349,7 +387,7 @@ export interface ParticipantUpdate {
 
 // ---- sessions.py ----------------------------------------------------------------
 
-export type SessionStatus = "created" | "in_progress" | "completed" | "abandoned" | "cancelled";
+export type SessionStatus = "created" | "activated" | "in_progress" | "completed" | "abandoned" | "expired" | "cancelled"; // MOD-5
 
 export interface SessionOverrides {
   task_type?: TaskType;
@@ -394,6 +432,8 @@ export interface SessionOut {
   started_at: string | null;
   completed_at: string | null;
   last_activity_at: string | null;
+  activated_at: string | null; // MOD-5
+  expired_at: string | null; // MOD-5
   created_at: string;
   stats: SessionStatsBrief;
 }
@@ -429,6 +469,8 @@ export interface MySessionOut {
   display_label: string;
   started_at: string | null;
   completed_at: string | null;
+  activated_at: string | null; // MOD-5
+  expired_at: string | null; // MOD-5
   locked: boolean;
 }
 

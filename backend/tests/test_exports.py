@@ -135,7 +135,8 @@ def test_study_export_zip_contains_four_files(
     )
     assert demo_resp.status_code == 204, demo_resp.text
 
-    run_to_completion(client, headers, session1["id"], practice_trials=0, test_trials=2)
+    # Session1 already started above (demographics check); skip the /start call.
+    run_to_completion(client, headers, session1["id"], practice_trials=0, test_trials=2, skip_start=True)
 
     resp = client.get(f"/api/v1/studies/{study['id']}/export.zip", headers=researcher_headers)
     assert resp.status_code == 200, resp.text
@@ -174,7 +175,7 @@ def test_study_export_zip_contains_four_files(
     assert row1["started_at_iso"].endswith("+00:00")
     assert row1["completed_at_iso"].endswith("+00:00")
 
-    assert row2["status"] == "created"
+    assert row2["status"] == "activated"  # MOD-5: auto-activated by test helper
     assert row2["n_trials"] == "0"
     assert row2["n_correct"] == "0"
     assert row2["accuracy_pct"] == ""

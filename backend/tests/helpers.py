@@ -110,6 +110,14 @@ def invalid_trial(
     )
 
 
+def activate_session(
+    client: TestClient, researcher_headers: dict[str, str], session_id: str
+) -> None:
+    """MOD-5: activate a session so it can be started by a participant."""
+    resp = client.post(f"/api/v1/sessions/{session_id}/activate", headers=researcher_headers)
+    assert resp.status_code == 200, f"activate_session failed: {resp.text}"
+
+
 def post_trials(
     client: TestClient, headers: dict[str, str], session_id: str, trials: list[dict[str, Any]]
 ) -> None:
@@ -130,6 +138,7 @@ def create_study_participant_session(
     test_trials: int,
     practice_trials: int = 0,
     count: int = 1,
+    activate: bool = True,
 ) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]], dict[str, str]]:
     """Create a study (with the given trial counts), one participant with a
     set password, and `count` sessions for that participant.
@@ -169,6 +178,11 @@ def create_study_participant_session(
     assert resp4.status_code == 201, resp4.text
     sessions: list[dict[str, Any]] = sorted(resp4.json(), key=lambda s: s["order_index"])
 
+    # MOD-5: activate all sessions so they can be started immediately.
+    if activate:
+        for s in sessions:
+            activate_session(client, headers, s["id"])
+
     return study, participant, sessions, participant_headers
 
 
@@ -181,10 +195,19 @@ def run_to_completion(
     test_trials: int,
     rt_ms: float = 400.0,
     key_map: list[str] | None = None,
+    researcher_headers: dict[str, str] | None = None,
+    skip_start: bool = False,
 ) -> None:
-    """Start the session, submit all-correct practice + test trials, and complete it."""
-    resp = client.post(f"/api/v1/sessions/{session_id}/start", headers=headers)
-    assert resp.status_code == 200, resp.text
+    """Start the session, submit all-correct practice + test trials, and complete it.
+
+    MOD-5: if `researcher_headers` is provided, activate the session before starting.
+    Pass researcher/admin headers whenever the session is still in ``created`` state.
+    """
+    if researcher_headers is not None:
+        activate_session(client, researcher_headers, session_id)
+    if not skip_start:
+        resp = client.post(f"/api/v1/sessions/{session_id}/start", headers=headers)
+        assert resp.status_code == 200, resp.text
 
     km = key_map or KEY_MAP_CRT3
     n = len(km)

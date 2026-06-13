@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, select
 
 from app.deps import CurrentParticipantDep, CurrentUserDep, DbDep
-from app.models import Participant, Study, Trial
+from app.models import Participant, Study, Trial, User
 from app.models import Session as SessionModel
 from app.schemas.common import merge_and_validate_params
 from app.schemas.sessions import (
@@ -30,7 +30,7 @@ from app.task_defaults import default_params
 
 router = APIRouter(tags=["sessions"])
 
-VALID_STATUS_FILTERS = {"created", "in_progress", "completed", "abandoned"}
+VALID_STATUS_FILTERS = {"created", "activated", "in_progress", "completed", "abandoned", "expired"}  # MOD-5
 
 
 def _naive(dt: datetime.datetime | None) -> datetime.datetime:
@@ -97,6 +97,8 @@ def _sessions_to_out(db: DbDep, sessions: list[SessionModel]) -> list[SessionOut
                 started_at=session.started_at,
                 completed_at=session.completed_at,
                 last_activity_at=session.last_activity_at,
+                activated_at=session.activated_at,
+                expired_at=session.expired_at,
                 created_at=session.created_at,
                 stats=session_stats_brief(summary),
             )
@@ -365,7 +367,8 @@ def update_session(
         session.last_activity_at = None
         session.resume_count = 0
     else:
-        if session.status != "created":
+        # MOD-5: allow cancelling created, activated, or expired sessions.
+        if session.status not in ("created", "activated", "expired"):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Cannot cancel a session with status {session.status!r}",
@@ -395,6 +398,45 @@ def delete_session(session_id: uuid.UUID, user: CurrentUserDep, db: DbDep) -> No
     db.commit()
 
 
+@router.post("/sessions/{session_id}/activate", response_model=SessionOut)
+def activate_session(session_id: uuid.UUID, user: CurrentUserDep, db: DbDep) -> SessionOut:
+    """MOD-5 / MFR-33: activate a single session (created → activated or expired → activated)."""
+    session = db.get(SessionModel, session_id)
+    if session is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    if session.status not in ("created", "expired"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Cannot activate a session with status {session.status!r}",
+        )
+    now = datetime.datetime.now(datetime.timezone.utc)
+    session.status = "activated"
+    session.activated_at = now
+    session.activated_by = user.id
+    db.commit()
+    db.refresh(session)
+    return _session_to_out(db, session)
+
+
+@router.post("/sessions/{session_id}/deactivate", response_model=SessionOut)
+def deactivate_session(session_id: uuid.UUID, user: CurrentUserDep, db: DbDep) -> SessionOut:
+    """MOD-5 / MFR-33: deactivate a single session (activated → expired)."""
+    session = db.get(SessionModel, session_id)
+    if session is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    if session.status != "activated":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Cannot deactivate a session with status {session.status!r}",
+        )
+    now = datetime.datetime.now(datetime.timezone.utc)
+    session.status = "expired"
+    session.expired_at = now
+    db.commit()
+    db.refresh(session)
+    return _session_to_out(db, session)
+
+
 @router.get("/me/sessions", response_model=list[MySessionOut])
 def list_my_sessions(participant: CurrentParticipantDep, db: DbDep) -> list[MySessionOut]:
     sessions = (
@@ -409,8 +451,8 @@ def list_my_sessions(participant: CurrentParticipantDep, db: DbDep) -> list[MySe
     for s in sessions:
         apply_lazy_abandonment(db, s)
 
+    # MOD-5: status drives gating; locked is kept for schema compat but always False.
     out: list[MySessionOut] = []
-    locked_so_far = False
     for s in sessions:
         out.append(
             MySessionOut(
@@ -424,9 +466,9 @@ def list_my_sessions(participant: CurrentParticipantDep, db: DbDep) -> list[MySe
                 display_label=s.display_label,
                 started_at=s.started_at,
                 completed_at=s.completed_at,
-                locked=locked_so_far,
+                activated_at=s.activated_at,
+                expired_at=s.expired_at,
+                locked=False,
             )
         )
-        if s.status != "completed":
-            locked_so_far = True
     return out

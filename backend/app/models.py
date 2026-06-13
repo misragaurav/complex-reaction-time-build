@@ -262,6 +262,16 @@ class Session(Base):
     display_label_overridden: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("0")
     )
+    # MOD-5: activation gating columns.
+    activated_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    expired_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    activated_by: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), ForeignKey("users.id"), nullable=True
+    )
     client_env: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant, nullable=True)
     started_at: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
@@ -281,9 +291,9 @@ class Session(Base):
             "task_type IN ('SRT','CRT2','CRT3','CRT4')", name="ck_sessions_task_type"
         ),  # MOD-2
         CheckConstraint(
-            "status IN ('created','in_progress','completed','abandoned','cancelled')",
+            "status IN ('created','activated','in_progress','completed','abandoned','expired','cancelled')",
             name="ck_sessions_status",
-        ),
+        ),  # MOD-5: adds 'activated', 'expired'
         # MOD-3 labelling constraints.
         CheckConstraint(
             "session_type IN ('onboarding','pre','post')", name="ck_sessions_session_type"

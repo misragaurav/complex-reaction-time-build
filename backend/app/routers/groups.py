@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 import uuid
 
 from fastapi import APIRouter, HTTPException, status
@@ -13,11 +14,16 @@ from app.models import Session as SessionModel
 from app.schemas.groups import (
     AssignedItem,
     ConflictItem,
+    GroupActivateResponse,
+    GroupActivatedItem,
     GroupAssignRequest,
     GroupAssignResponse,
     GroupCompletionStats,
     GroupCreate,
+    GroupDeactivateRequest,
+    GroupDeactivateResponse,
     GroupDetailOut,
+    GroupExpiredItem,
     GroupMember,
     GroupOut,
     GroupUpdate,
@@ -266,3 +272,107 @@ def assign_participants(
 
     db.commit()
     return GroupAssignResponse(assigned=assigned, conflicts=conflicts)
+
+
+def _group_member_ids(db: DbDep, group_id: uuid.UUID) -> list[uuid.UUID]:
+    return [
+        row[0]
+        for row in db.execute(
+            select(ParticipantGroupAssignment.participant_id).where(
+                ParticipantGroupAssignment.group_id == group_id
+            )
+        ).all()
+    ]
+
+
+@router.post("/groups/{group_id}/activate", response_model=GroupActivateResponse)
+def activate_group(group_id: uuid.UUID, user: CurrentUserDep, db: DbDep) -> GroupActivateResponse:
+    """MOD-5 / MFR-31: activate the current-session slot for all group members."""
+    group = _get_group(db, group_id)
+    if group.current_intervention_session is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Group has no current_intervention_session set",
+        )
+
+    member_ids = _group_member_ids(db, group_id)
+    now = datetime.datetime.now(datetime.timezone.utc)
+    activated: list[GroupActivatedItem] = []
+    for pid in member_ids:
+        participant = db.get(Participant, pid)
+        if participant is None:
+            continue
+        sessions = db.execute(
+            select(SessionModel).where(
+                SessionModel.participant_id == pid,
+                SessionModel.intervention_session_number == group.current_intervention_session,
+                SessionModel.status.in_(["created", "expired"]),
+            )
+        ).scalars().all()
+        for s in sessions:
+            s.status = "activated"
+            s.activated_at = now
+            s.activated_by = user.id
+            activated.append(
+                GroupActivatedItem(
+                    participant_id=pid,
+                    code=participant.code,
+                    session_id=s.id,
+                    display_label=s.display_label,
+                    session_type=s.session_type,
+                    order_index=s.order_index,
+                )
+            )
+    db.commit()
+    return GroupActivateResponse(activated=activated)
+
+
+@router.post("/groups/{group_id}/deactivate", response_model=GroupDeactivateResponse)
+def deactivate_group(
+    group_id: uuid.UUID, payload: GroupDeactivateRequest, user: CurrentUserDep, db: DbDep
+) -> GroupDeactivateResponse:
+    """MOD-5 / MFR-32: expire activated sessions for all group members at current slot."""
+    group = _get_group(db, group_id)
+    if group.current_intervention_session is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Group has no current_intervention_session set",
+        )
+
+    member_ids = _group_member_ids(db, group_id)
+    sessions = db.execute(
+        select(SessionModel).where(
+            SessionModel.participant_id.in_(member_ids),
+            SessionModel.intervention_session_number == group.current_intervention_session,
+            SessionModel.status.in_(["activated", "in_progress"]),
+        )
+    ).scalars().all()
+
+    in_progress = [s for s in sessions if s.status == "in_progress"]
+    if in_progress and not payload.force:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"{len(in_progress)} session(s) are in_progress; use force=true to expire only activated ones",
+        )
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    expired: list[GroupExpiredItem] = []
+    participant_cache: dict[uuid.UUID, Participant] = {}
+    for s in sessions:
+        if s.status != "activated":
+            continue
+        participant = participant_cache.get(s.participant_id) or db.get(Participant, s.participant_id)
+        if participant:
+            participant_cache[s.participant_id] = participant
+        s.status = "expired"
+        s.expired_at = now
+        expired.append(
+            GroupExpiredItem(
+                participant_id=s.participant_id,
+                code=participant.code if participant else "",
+                session_id=s.id,
+                display_label=s.display_label,
+            )
+        )
+    db.commit()
+    return GroupDeactivateResponse(expired=expired, in_progress_count=len(in_progress))

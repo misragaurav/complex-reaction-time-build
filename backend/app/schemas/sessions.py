@@ -11,7 +11,7 @@ from pydantic import model_validator
 from app.schemas.common import TaskParams, TaskType
 from app.schemas.demographics import DemographicFieldPublic
 
-SessionStatus = Literal["created", "in_progress", "completed", "abandoned", "cancelled"]
+SessionStatus = Literal["created", "activated", "in_progress", "completed", "abandoned", "expired", "cancelled"]  # MOD-5
 SessionType = Literal["onboarding", "pre", "post"]  # MOD-3
 
 
@@ -62,6 +62,8 @@ class SessionOut(BaseModel):
     started_at: datetime.datetime | None
     completed_at: datetime.datetime | None
     last_activity_at: datetime.datetime | None
+    activated_at: datetime.datetime | None  # MOD-5
+    expired_at: datetime.datetime | None  # MOD-5
     created_at: datetime.datetime
     stats: SessionStatsBrief
 
@@ -97,6 +99,8 @@ class MySessionOut(BaseModel):
     display_label: str
     started_at: datetime.datetime | None
     completed_at: datetime.datetime | None
+    activated_at: datetime.datetime | None  # MOD-5
+    expired_at: datetime.datetime | None  # MOD-5
     locked: bool
 
 
