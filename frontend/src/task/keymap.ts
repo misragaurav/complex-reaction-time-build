@@ -2,11 +2,12 @@
 
 import type { TaskType } from "../api/types";
 
-/** §5.2 number of stimulus positions per task type. */
-export const TASK_POSITIONS: Record<TaskType, number> = { CRT2: 2, CRT3: 3, CRT4: 4 };
+/** §5.2 number of stimulus positions per task type (MOD-2: SRT has 1). */
+export const TASK_POSITIONS: Record<TaskType, number> = { SRT: 1, CRT2: 2, CRT3: 3, CRT4: 4 };
 
-/** §5.2 default key mappings, left -> right. */
+/** §5.2 default key mappings, left -> right (MOD-2: SRT uses Space). */
 export const DEFAULT_KEY_MAPS: Record<TaskType, string[]> = {
+  SRT: ["Space"],
   CRT2: ["ArrowLeft", "ArrowRight"],
   CRT3: ["KeyZ", "KeyX", "KeyC"],
   CRT4: ["KeyZ", "KeyX", "KeyN", "KeyM"],
@@ -20,6 +21,7 @@ export const KEY_LABELS: Record<string, string> = {
   ArrowRight: "→",
   ArrowUp: "↑",
   ArrowDown: "↓",
+  Space: "Space", // MOD-2
   ...Object.fromEntries([...LETTERS].map((c) => [`Key${c}`, c])),
   ...Object.fromEntries(Array.from({ length: 10 }, (_, d) => [`Digit${d}`, String(d)])),
 };
@@ -32,6 +34,7 @@ export const ALLOWED_KEY_CODES: string[] = [
   "ArrowRight",
   "ArrowUp",
   "ArrowDown",
+  "Space", // MOD-2
 ];
 
 export function keyLabel(code: string): string {

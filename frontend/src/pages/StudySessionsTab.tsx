@@ -19,6 +19,7 @@ import { DEFAULT_KEY_MAPS } from "../task/keymap";
 import { downloadBlob } from "../utils/download";
 
 const TASK_TYPE_LABELS: Record<TaskType, string> = {
+  SRT: "Simple reaction time", // MOD-2
   CRT2: "2-choice reaction time",
   CRT3: "3-choice reaction time",
   CRT4: "4-choice reaction time",

@@ -3,7 +3,7 @@
 
 // ---- common.py --------------------------------------------------------------
 
-export type TaskType = "CRT2" | "CRT3" | "CRT4";
+export type TaskType = "SRT" | "CRT2" | "CRT3" | "CRT4"; // MOD-2: SRT added
 
 export interface TaskParams {
   task_type: TaskType;

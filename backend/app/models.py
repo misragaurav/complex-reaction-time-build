@@ -75,7 +75,9 @@ class Study(Base):
     )
 
     __table_args__ = (
-        CheckConstraint("task_type IN ('CRT2','CRT3','CRT4')", name="ck_studies_task_type"),
+        CheckConstraint(
+            "task_type IN ('SRT','CRT2','CRT3','CRT4')", name="ck_studies_task_type"
+        ),  # MOD-2
     )
 
     creator: Mapped["User"] = relationship(back_populates="studies")
@@ -227,7 +229,9 @@ class Session(Base):
     )
 
     __table_args__ = (
-        CheckConstraint("task_type IN ('CRT2','CRT3','CRT4')", name="ck_sessions_task_type"),
+        CheckConstraint(
+            "task_type IN ('SRT','CRT2','CRT3','CRT4')", name="ck_sessions_task_type"
+        ),  # MOD-2
         CheckConstraint(
             "status IN ('created','in_progress','completed','abandoned','cancelled')",
             name="ck_sessions_status",
