@@ -32,6 +32,7 @@ TRIAL_COLUMNS = [
     "stimulus_onset_client_ms",
     "session_started_at_iso",
     "session_completed_at_iso",
+    "group_name",  # MOD-4 / MFR-26 (trailing column)
 ]
 
 
@@ -41,7 +42,11 @@ def trial_sort_key(trial: Trial) -> tuple[int, int, int]:
 
 
 def trial_row(
-    study: Study, participant: Participant, session: SessionModel, trial: Trial
+    study: Study,
+    participant: Participant,
+    session: SessionModel,
+    trial: Trial,
+    group_name: str = "",
 ) -> list[object]:
     return [
         study.name,
@@ -66,6 +71,7 @@ def trial_row(
         trial.stimulus_onset_client_ms,
         iso_utc(session.started_at),
         iso_utc(session.completed_at),
+        group_name,
     ]
 
 
@@ -94,11 +100,15 @@ SESSION_SUMMARY_COLUMNS = [
     "iiv_within_ms_trim",
     "started_at_iso",
     "completed_at_iso",
+    "group_name",  # MOD-4 / MFR-26 (trailing column)
 ]
 
 
 def session_summary_row(
-    participant: Participant, session: SessionModel, summary: SessionSummaryOut
+    participant: Participant,
+    session: SessionModel,
+    summary: SessionSummaryOut,
+    group_name: str = "",
 ) -> list[object]:
     raw, trimmed = summary.raw, summary.trimmed
     return [
@@ -126,6 +136,7 @@ def session_summary_row(
         trimmed.iiv_within_ms,
         iso_utc(session.started_at),
         iso_utc(session.completed_at),
+        group_name,
     ]
 
 
@@ -138,10 +149,13 @@ PARTICIPANT_SUMMARY_COLUMNS = [
     "mean_of_session_means_ms_trim",
     "iiv_between_ms_trim",
     "cov_between_trim",
+    "group_name",  # MOD-4 / MFR-26 (trailing column)
 ]
 
 
-def participant_summary_row(summary: ParticipantSummaryOut) -> list[object]:
+def participant_summary_row(
+    summary: ParticipantSummaryOut, group_name: str = ""
+) -> list[object]:
     raw, trimmed = summary.cross_session_raw, summary.cross_session_trimmed
     return [
         summary.participant_code,
@@ -152,6 +166,7 @@ def participant_summary_row(summary: ParticipantSummaryOut) -> list[object]:
         trimmed.mean_of_session_means_ms,
         trimmed.iiv_between_ms,
         trimmed.cov_between,
+        group_name,
     ]
 
 

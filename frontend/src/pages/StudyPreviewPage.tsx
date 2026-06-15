@@ -225,8 +225,9 @@ function PreviewRunner({ studyId }: { studyId: string }): JSX.Element {
       return (
         <CenteredScreen>
           <p className="text-sm font-medium uppercase tracking-wide text-gray-400">Preview — no data is recorded</p>
-          <h1 className="text-xl font-semibold text-gray-900">Instructions</h1>
-          <p className="text-base leading-relaxed text-gray-800">{renderInstructions(params.instructions_text, params)}</p>
+          <h1 className="text-2xl font-semibold text-gray-900">Instructions</h1>
+          {/* MOD-1: instructional text >= 20px */}
+          <p className="text-xl leading-relaxed text-gray-800">{renderInstructions(params.instructions_text, params)}</p>
           <KeyMappingDiagram keyMap={params.key_map} />
           <Button onClick={() => startBlock("practice")}>Start practice</Button>
         </CenteredScreen>
@@ -248,7 +249,8 @@ function PreviewRunner({ studyId }: { studyId: string }): JSX.Element {
           {state.paused && (
             <div className="fixed inset-0 z-10 flex items-center justify-center bg-white/90">
               <div className="space-y-4 text-center">
-                <p className="text-lg text-gray-900">Press Continue to re-enter fullscreen</p>
+                {/* MOD-1: instructional text >= 20px */}
+                <p className="text-xl text-gray-900">Press Continue to re-enter fullscreen</p>
                 <Button onClick={resume}>Continue</Button>
               </div>
             </div>
@@ -260,7 +262,8 @@ function PreviewRunner({ studyId }: { studyId: string }): JSX.Element {
     case "interstitial":
       return (
         <CenteredScreen>
-          <p className="text-lg text-gray-900">
+          {/* MOD-1: interstitial text >= 20px */}
+          <p className="text-xl text-gray-900">
             Practice complete. The real test starts now. Respond as quickly and as accurately as you can.
           </p>
           <Button onClick={() => startBlock("test")}>Start test</Button>
@@ -270,7 +273,8 @@ function PreviewRunner({ studyId }: { studyId: string }): JSX.Element {
     case "completed":
       return (
         <CenteredScreen>
-          <p className="text-lg text-gray-900">Preview complete. No data was recorded.</p>
+          {/* MOD-1: completion text >= 20px */}
+          <p className="text-xl text-gray-900">Preview complete. No data was recorded.</p>
           <Button onClick={() => navigate(`/studies/${studyId}`)}>Back to study</Button>
         </CenteredScreen>
       );

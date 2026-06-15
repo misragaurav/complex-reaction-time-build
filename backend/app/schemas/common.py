@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.task_defaults import ALLOWED_KEY_CODES, TASK_POSITIONS, default_params
 
-TaskType = Literal["CRT2", "CRT3", "CRT4"]
+TaskType = Literal["SRT", "CRT2", "CRT3", "CRT4"]  # MOD-2: SRT added
 
 
 class TaskParams(BaseModel):

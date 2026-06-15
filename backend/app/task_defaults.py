@@ -4,33 +4,37 @@ from __future__ import annotations
 
 from typing import Any, Final
 
-TASK_TYPES: Final[list[str]] = ["CRT2", "CRT3", "CRT4"]
+# MOD-2: SRT added as a fourth task type (single position, single key).
+TASK_TYPES: Final[list[str]] = ["SRT", "CRT2", "CRT3", "CRT4"]
 
-# §5.2 number of stimulus positions per task type
-TASK_POSITIONS: Final[dict[str, int]] = {"CRT2": 2, "CRT3": 3, "CRT4": 4}
+# §5.2 number of stimulus positions per task type (MOD-2: SRT has 1)
+TASK_POSITIONS: Final[dict[str, int]] = {"SRT": 1, "CRT2": 2, "CRT3": 3, "CRT4": 4}
 
-# §5.2 default key mappings, left -> right
+# §5.2 default key mappings, left -> right (MOD-2: SRT uses Space)
 DEFAULT_KEY_MAPS: Final[dict[str, list[str]]] = {
+    "SRT": ["Space"],
     "CRT2": ["ArrowLeft", "ArrowRight"],
     "CRT3": ["KeyZ", "KeyX", "KeyC"],
     "CRT4": ["KeyZ", "KeyX", "KeyN", "KeyM"],
 }
 
-# §5.2 displayed key cap labels
+# §5.2 displayed key cap labels (MOD-2: Space)
 KEY_LABELS: Final[dict[str, str]] = {
     "ArrowLeft": "←",
     "ArrowRight": "→",
     "ArrowUp": "↑",
     "ArrowDown": "↓",
+    "Space": "Space",
     **{f"Key{c}": c for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ"},
     **{f"Digit{d}": str(d) for d in range(10)},
 }
 
-# FR-39: allowed KeyboardEvent.code values for key_map (letters, digits, arrows)
+# FR-39: allowed KeyboardEvent.code values for key_map (letters, digits, arrows,
+# and — MOD-2 — Space for the SRT task)
 ALLOWED_KEY_CODES: Final[list[str]] = (
     [f"Key{c}" for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ"]
     + [f"Digit{d}" for d in range(10)]
-    + ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"]
+    + ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Space"]
 )
 
 # §5.3 verbatim default instructions template
@@ -39,6 +43,16 @@ DEFAULT_INSTRUCTIONS_TEXT: Final[str] = (
     "will change into a box. Press the key that matches the position of the box "
     "as quickly and as accurately as you can. The keys are: {KEYS}. Place your "
     "fingers on these keys now. There will be {P} practice trials first, then "
+    "{T} test trials."
+)
+
+# MOD-2/MFR-10: singular-N (SRT) instructions template — there is one cross and
+# one key, so the §5.3 "press the key that matches the position" phrasing is
+# replaced with simple-reaction phrasing.
+DEFAULT_INSTRUCTIONS_TEXT_SRT: Final[str] = (
+    "You will see a cross on the screen. On each trial, the cross will change "
+    "into a box. Press {KEYS} as quickly as you can when the box appears. Place "
+    "your finger on this key now. There will be {P} practice trials first, then "
     "{T} test trials."
 )
 
@@ -74,6 +88,8 @@ def default_params(task_type: str) -> dict[str, Any]:
     params = dict(PARAM_DEFAULTS_BASE)
     params["task_type"] = task_type
     params["key_map"] = list(DEFAULT_KEY_MAPS[task_type])
+    if task_type == "SRT":  # MOD-2/MFR-10
+        params["instructions_text"] = DEFAULT_INSTRUCTIONS_TEXT_SRT
     return params
 
 

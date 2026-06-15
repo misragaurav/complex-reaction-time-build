@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Response, status
 from sqlalchemy import func, select
 
 from app.deps import CurrentUserDep, DbDep
-from app.models import Participant
+from app.models import Group, Participant, ParticipantGroupAssignment
 from app.models import Session as SessionModel
 from app.models import Study
 from app.schemas.participants import ParticipantCreate, ParticipantOut, ParticipantUpdate
@@ -27,6 +27,12 @@ def _participant_to_out(db: DbDep, participant: Participant) -> ParticipantOut:
         .select_from(SessionModel)
         .where(SessionModel.participant_id == participant.id, SessionModel.status == "completed")
     ).scalar_one()
+    # MOD-4: resolve the participant's group assignment (if any).
+    group_row = db.execute(
+        select(Group.id, Group.name)
+        .join(ParticipantGroupAssignment, ParticipantGroupAssignment.group_id == Group.id)
+        .where(ParticipantGroupAssignment.participant_id == participant.id)
+    ).first()
     return ParticipantOut(
         id=participant.id,
         study_id=participant.study_id,
@@ -35,6 +41,8 @@ def _participant_to_out(db: DbDep, participant: Participant) -> ParticipantOut:
         is_active=participant.is_active,
         sessions_assigned=sessions_assigned,
         sessions_completed=sessions_completed,
+        group_id=group_row[0] if group_row else None,
+        group_name=group_row[1] if group_row else None,
         last_login_at=participant.last_login_at,
         created_at=participant.created_at,
     )

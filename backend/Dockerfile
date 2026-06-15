@@ -12,7 +12,7 @@ COPY app ./app
 
 # Editable install so the docker-compose.dev.yml bind mounts of ./app are the
 # code that actually runs; in the plain image it behaves like a normal install.
-RUN pip install --no-cache-dir -e .
+RUN pip install --no-cache-dir -e ".[dev]"
 
 EXPOSE 8000
 

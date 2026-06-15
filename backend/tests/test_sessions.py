@@ -10,8 +10,7 @@ from fastapi.testclient import TestClient
 
 from app.database import SessionLocal
 from app.models import Session as SessionModel
-from app.task_defaults import default_params
-from tests.helpers import post_trials, correct_trial
+from tests.helpers import create_sessions_orm, post_trials, correct_trial
 
 
 def _create_participants(
@@ -25,98 +24,14 @@ def _create_participants(
     return data
 
 
-def test_create_sessions_for_multiple_participants_snapshot_and_overrides(
-    client: TestClient, researcher_headers: dict[str, str], study: dict[str, Any]
-) -> None:
-    participants = _create_participants(client, researcher_headers, study["id"], 3)
-
-    resp = client.post(
-        f"/api/v1/studies/{study['id']}/sessions",
-        json={"participant_ids": [p["id"] for p in participants], "count": 2},
-        headers=researcher_headers,
-    )
-    assert resp.status_code == 201, resp.text
-    sessions: list[dict[str, Any]] = resp.json()
-    assert len(sessions) == 6
-
-    by_participant: dict[str, list[dict[str, Any]]] = {}
-    for s in sessions:
-        by_participant.setdefault(s["participant_id"], []).append(s)
-        assert s["params"] == default_params("CRT3")
-        assert s["status"] == "created"
-        assert s["attempt"] == 1
-        assert s["resume_count"] == 0
-        assert s["stats"] == {
-            "trimmed_mean_rt_ms": None,
-            "accuracy_pct": None,
-            "n_outliers_flagged": 0,
-        }
-
-    for p in participants:
-        order_indexes = sorted(s["order_index"] for s in by_participant[p["id"]])
-        assert order_indexes == [1, 2]
-
-    # A further session with overrides is appended (order_index 3) and its
-    # params are the merged snapshot, not a live reference to the study.
-    resp2 = client.post(
-        f"/api/v1/studies/{study['id']}/sessions",
-        json={
-            "participant_ids": [participants[0]["id"]],
-            "count": 1,
-            "overrides": {"params": {"test_trials": 5}},
-        },
-        headers=researcher_headers,
-    )
-    assert resp2.status_code == 201, resp2.text
-    overridden = resp2.json()[0]
-    assert overridden["order_index"] == 3
-    assert overridden["params"]["test_trials"] == 5
-    assert overridden["params"]["practice_trials"] == default_params("CRT3")["practice_trials"]
-
-    # Editing the study afterwards does not change existing session snapshots.
-    resp3 = client.patch(
-        f"/api/v1/studies/{study['id']}",
-        json={"params": {"test_trials": 99}},
-        headers=researcher_headers,
-    )
-    assert resp3.status_code == 200, resp3.text
-
-    resp4 = client.get(
-        f"/api/v1/studies/{study['id']}/sessions",
-        headers=researcher_headers,
-        params={"participant_id": participants[0]["id"]},
-    )
-    assert resp4.status_code == 200, resp4.text
-    refetched = {s["order_index"]: s for s in resp4.json()}
-    assert refetched[1]["params"]["test_trials"] == default_params("CRT3")["test_trials"]
-    assert refetched[3]["params"]["test_trials"] == 5
-
-
-def test_create_sessions_unknown_participant_returns_404(
-    client: TestClient, researcher_headers: dict[str, str], study: dict[str, Any]
-) -> None:
-    resp = client.post(
-        f"/api/v1/studies/{study['id']}/sessions",
-        json={"participant_ids": ["00000000-0000-0000-0000-000000000000"], "count": 1},
-        headers=researcher_headers,
-    )
-    assert resp.status_code == 404
-
 
 def test_list_sessions_filter_sort_and_invalid_params(
     client: TestClient, researcher_headers: dict[str, str], study: dict[str, Any]
 ) -> None:
     participants = _create_participants(client, researcher_headers, study["id"], 1)
-    pid = participants[0]["id"]
 
-    resp = client.post(
-        f"/api/v1/studies/{study['id']}/sessions",
-        json={"participant_ids": [pid], "count": 2},
-        headers=researcher_headers,
-    )
-    assert resp.status_code == 201, resp.text
-    sessions = resp.json()
-    session1, session2 = sorted(sessions, key=lambda s: s["order_index"])
+    sessions = create_sessions_orm(client, researcher_headers, study, participants[0], count=2)
+    session1, session2 = sessions[0], sessions[1]
 
     # Cancel session 2 (status == "created" -> allowed).
     resp_cancel = client.patch(
@@ -138,7 +53,7 @@ def test_list_sessions_filter_sort_and_invalid_params(
     resp_filtered = client.get(
         f"/api/v1/studies/{study['id']}/sessions",
         headers=researcher_headers,
-        params={"participant_id": pid, "status": "created"},
+        params={"participant_id": participants[0]["id"], "status": "created"},
     )
     assert resp_filtered.status_code == 200, resp_filtered.text
     assert [s["id"] for s in resp_filtered.json()] == [session1["id"]]
@@ -286,17 +201,15 @@ def test_my_sessions_lock_state(
     participant: dict[str, Any],
     participant_headers: dict[str, str],
 ) -> None:
-    resp = client.post(
-        f"/api/v1/studies/{study['id']}/sessions",
-        json={"participant_ids": [participant["id"]], "count": 2},
-        headers=researcher_headers,
-    )
-    assert resp.status_code == 201, resp.text
+    """MOD-5: locked is always False; status drives participant gating."""
+    create_sessions_orm(client, researcher_headers, study, participant, count=2)
 
     resp2 = client.get("/api/v1/me/sessions", headers=participant_headers)
     assert resp2.status_code == 200, resp2.text
     sessions = sorted(resp2.json(), key=lambda s: s["order_index"])
     assert sessions[0]["order_index"] == 1
     assert sessions[0]["locked"] is False
+    assert sessions[0]["status"] == "created"
     assert sessions[1]["order_index"] == 2
-    assert sessions[1]["locked"] is True
+    assert sessions[1]["locked"] is False  # MOD-5: always False; status is authoritative
+    assert sessions[1]["status"] == "created"

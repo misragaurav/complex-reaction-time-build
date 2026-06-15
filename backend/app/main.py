@@ -16,6 +16,7 @@ from app.routers import (
     auth,
     demographics,
     exports,
+    groups,
     health,
     participants,
     runtime,
@@ -72,5 +73,6 @@ for _router in (
     runtime.router,
     statistics.router,
     exports.router,
+    groups.router,
 ):
     app.include_router(_router, prefix=API_V1_PREFIX)
