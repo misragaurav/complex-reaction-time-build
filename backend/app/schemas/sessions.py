@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import datetime
 import uuid
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
-
 from pydantic import model_validator
 
 from app.schemas.common import TaskParams, TaskType
@@ -14,22 +13,6 @@ from app.schemas.demographics import DemographicFieldPublic
 SessionStatus = Literal["created", "activated", "in_progress", "completed", "abandoned", "expired", "cancelled"]  # MOD-5
 SessionType = Literal["onboarding", "pre", "post"]  # MOD-3
 
-
-class SessionOverrides(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    task_type: TaskType | None = None
-    params: dict[str, Any] | None = None
-
-
-class SessionCreateRequest(BaseModel):
-    """`{participant_ids:[...], count, overrides?:{task_type?, params?}}` per API #15."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    participant_ids: list[uuid.UUID] = Field(min_length=1)
-    count: int = Field(ge=1, le=50)
-    overrides: SessionOverrides | None = None
 
 
 class SessionStatsBrief(BaseModel):

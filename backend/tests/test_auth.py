@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from app.security import decode_token
 from tests.conftest import ADMIN_EMAIL, ADMIN_PASSWORD, auth_headers, login
+from tests.helpers import create_sessions_orm
 
 
 def test_admin_login_success_returns_jwt_with_id_and_role_and_sets_refresh_cookie(
@@ -94,13 +95,8 @@ def test_participant_cannot_start_another_participants_session(
     assert resp.status_code == 201, resp.text
     other_participant = resp.json()[0]
 
-    resp = client.post(
-        f"/api/v1/studies/{study['id']}/sessions",
-        json={"participant_ids": [other_participant["id"]], "count": 1},
-        headers=researcher_headers,
-    )
-    assert resp.status_code == 201, resp.text
-    other_session = resp.json()[0]
+    other_sessions = create_sessions_orm(client, researcher_headers, study, other_participant, count=1)
+    other_session = other_sessions[0]
 
     resp = client.post(
         f"/api/v1/sessions/{other_session['id']}/start", headers=participant_headers

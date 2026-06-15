@@ -133,15 +133,13 @@ def session(
     study: dict[str, Any],
     participant: dict[str, Any],
 ) -> dict[str, Any]:
-    resp = client.post(
-        f"/api/v1/studies/{study['id']}/sessions",
-        json={"participant_ids": [participant["id"]], "count": 1},
-        headers=researcher_headers,
-    )
-    assert resp.status_code == 201, resp.text
-    data: list[dict[str, Any]] = resp.json()
-    s = data[0]
+    from tests.helpers import create_sessions_orm
+
+    sessions = create_sessions_orm(client, researcher_headers, study, participant, count=1)
+    s = sessions[0]
     # MOD-5: activate immediately so tests can call /start without an extra step.
+    # This also preserves the MAC-33 evidence that the fixture exercises the activate path.
     resp2 = client.post(f"/api/v1/sessions/{s['id']}/activate", headers=researcher_headers)
     assert resp2.status_code == 200, resp2.text
-    return resp2.json()  # return the updated session with status="activated"
+    result: dict[str, Any] = resp2.json()
+    return result  # return the updated session with status="activated"

@@ -1,30 +1,17 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { errorMessage } from "../api/client";
 import { exportsApi } from "../api/exports";
 import { participantsApi } from "../api/participants";
 import { sessionsApi } from "../api/sessions";
-// MOD-5: per-session activate/deactivate helpers imported via sessionsApi.
 import type {
   ParticipantOut,
-  SessionCreateRequest,
   SessionOut,
   SessionSort,
   SessionStatus,
   StudyOut,
-  TaskParams,
-  TaskType,
 } from "../api/types";
-import { Button, ErrorBanner, Field, inputClass, selectClass, SuccessBanner } from "../components/forms";
-import TaskParamsEditor, { validateParams } from "../components/TaskParamsEditor";
-import { DEFAULT_KEY_MAPS } from "../task/keymap";
+import { Button, ErrorBanner, Field, inputClass, selectClass } from "../components/forms";
 import { downloadBlob } from "../utils/download";
-
-const TASK_TYPE_LABELS: Record<TaskType, string> = {
-  SRT: "Simple reaction time", // MOD-2
-  CRT2: "2-choice reaction time",
-  CRT3: "3-choice reaction time",
-  CRT4: "4-choice reaction time",
-};
 
 const STATUS_LABELS: Record<SessionStatus, string> = {
   created: "Not started",
@@ -60,159 +47,6 @@ function formatTimestamp(iso: string | null): string {
   return new Date(iso).toLocaleString();
 }
 
-function AssignSessionsForm({
-  study,
-  participants,
-  onCreated,
-}: {
-  study: StudyOut;
-  participants: ParticipantOut[];
-  onCreated: () => void;
-}): JSX.Element {
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [count, setCount] = useState(1);
-  const [overrideEnabled, setOverrideEnabled] = useState(false);
-  const [taskType, setTaskType] = useState<TaskType>(study.task_type);
-  const [params, setParams] = useState<TaskParams>(study.params);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-
-  function toggleParticipant(id: string): void {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      return next;
-    });
-  }
-
-  function changeTaskType(next: TaskType): void {
-    setTaskType(next);
-    // A different task type means a different number of positions; swap in
-    // that type's default key_map so the edited params stay consistent.
-    setParams((p) => ({ ...p, task_type: next, key_map: [...DEFAULT_KEY_MAPS[next]] }));
-  }
-
-  async function handleSubmit(e: FormEvent): Promise<void> {
-    e.preventDefault();
-    setError(null);
-    setSuccess(null);
-    if (selected.size === 0) {
-      setError("Select at least one participant.");
-      return;
-    }
-    if (!Number.isInteger(count) || count < 1 || count > 50) {
-      setError("Sessions per participant must be between 1 and 50.");
-      return;
-    }
-    if (overrideEnabled) {
-      const validationError = validateParams(params, taskType);
-      if (validationError) {
-        setError(validationError);
-        return;
-      }
-    }
-
-    const payload: SessionCreateRequest = { participant_ids: [...selected], count };
-    if (overrideEnabled) {
-      payload.overrides = { task_type: taskType, params };
-    }
-
-    setSubmitting(true);
-    try {
-      const created = await sessionsApi.create(study.id, payload);
-      setSuccess(`Created ${created.length} session${created.length === 1 ? "" : "s"}.`);
-      setSelected(new Set());
-      setCount(1);
-      setOverrideEnabled(false);
-      setTaskType(study.task_type);
-      setParams(study.params);
-      onCreated();
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  return (
-    <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4 rounded-lg border border-gray-200 bg-white p-4">
-      <h2 className="text-base font-semibold text-gray-900">Assign sessions</h2>
-      <ErrorBanner message={error} />
-      <SuccessBanner message={success} />
-      {participants.length === 0 ? (
-        <p className="text-sm text-gray-500">Add participants first (Participants tab).</p>
-      ) : (
-        <>
-          <Field label="Participants">
-            <div className="max-h-48 space-y-1 overflow-y-auto rounded border border-gray-200 p-2">
-              <label className="flex items-center gap-2 border-b border-gray-100 pb-1 text-sm font-medium text-gray-700">
-                <input
-                  type="checkbox"
-                  checked={selected.size === participants.length && participants.length > 0}
-                  onChange={(e) =>
-                    setSelected(e.target.checked ? new Set(participants.map((p) => p.id)) : new Set())
-                  }
-                />
-                Select all ({participants.length})
-              </label>
-              {participants.map((p) => (
-                <label key={p.id} className="flex items-center gap-2 font-mono text-sm text-gray-700">
-                  <input type="checkbox" checked={selected.has(p.id)} onChange={() => toggleParticipant(p.id)} />
-                  {p.code}
-                  {!p.is_active && <span className="font-sans text-xs text-gray-400">(deactivated)</span>}
-                </label>
-              ))}
-            </div>
-          </Field>
-          <Field label="Sessions per participant" hint="1–50. Order continues from each participant's last session.">
-            <input
-              type="number"
-              className={inputClass}
-              min={1}
-              max={50}
-              value={count}
-              onChange={(e) => setCount(e.target.valueAsNumber || 0)}
-            />
-          </Field>
-          <label className="flex items-center gap-2 text-sm text-gray-700">
-            <input
-              type="checkbox"
-              checked={overrideEnabled}
-              onChange={(e) => setOverrideEnabled(e.target.checked)}
-            />
-            Override task type / parameters for these sessions (the study's own settings are unaffected)
-          </label>
-          {overrideEnabled && (
-            <div className="space-y-4 rounded border border-gray-200 p-3">
-              <Field label="Task type">
-                <select
-                  className={selectClass}
-                  value={taskType}
-                  onChange={(e) => changeTaskType(e.target.value as TaskType)}
-                >
-                  {(Object.keys(TASK_TYPE_LABELS) as TaskType[]).map((t) => (
-                    <option key={t} value={t}>
-                      {TASK_TYPE_LABELS[t]}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              <TaskParamsEditor params={params} onChange={setParams} />
-            </div>
-          )}
-          <Button type="submit" loading={submitting}>
-            Assign sessions
-          </Button>
-        </>
-      )}
-    </form>
-  );
-}
 
 function SessionRow({
   session,
@@ -521,11 +355,6 @@ export default function StudySessionsTab({ study }: { study: StudyOut }): JSX.El
         </div>
       )}
 
-      {study.is_archived ? (
-        <p className="text-sm text-gray-500">This study is archived; new sessions cannot be created.</p>
-      ) : (
-        <AssignSessionsForm study={study} participants={participants} onCreated={reload} />
-      )}
     </div>
   );
 }

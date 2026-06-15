@@ -389,18 +389,6 @@ export interface ParticipantUpdate {
 
 export type SessionStatus = "created" | "activated" | "in_progress" | "completed" | "abandoned" | "expired" | "cancelled"; // MOD-5
 
-export interface SessionOverrides {
-  task_type?: TaskType;
-  params?: TaskParamsInput;
-}
-
-/** `{participant_ids:[...], count, overrides?:{task_type?, params?}}` per API #15. */
-export interface SessionCreateRequest {
-  participant_ids: string[];
-  count: number;
-  overrides?: SessionOverrides;
-}
-
 /** FR-50 row stats: trimmed mean RT, accuracy, and outlier-flag count. */
 export interface SessionStatsBrief {
   trimmed_mean_rt_ms: number | null;

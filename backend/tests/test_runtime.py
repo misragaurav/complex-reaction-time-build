@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 
 from app.database import SessionLocal
 from app.models import Session as SessionModel
-from tests.helpers import activate_session, correct_trial, invalid_trial, make_trial, post_trials, run_to_completion
+from tests.helpers import activate_session, correct_trial, create_sessions_orm, invalid_trial, make_trial, post_trials, run_to_completion
 
 
 def _parse_csv_rows(text: str) -> list[dict[str, str]]:
@@ -56,23 +56,33 @@ def test_start_unowned_session_returns_404(
 def test_start_requires_activated_status(
     client: TestClient,
     researcher_headers: dict[str, str],
-    study: dict[str, Any],
-    participant: dict[str, Any],
-    participant_headers: dict[str, str],
 ) -> None:
     """MOD-5: a session must be activated before it can be started (replaces order lock)."""
-    resp = client.post(
-        f"/api/v1/studies/{study['id']}/sessions",
-        json={
-            "participant_ids": [participant["id"]],
-            "count": 2,
-            "overrides": {"params": {"practice_trials": 1, "test_trials": 2}},
-        },
+    study_resp = client.post(
+        "/api/v1/studies",
+        json={"name": "Activation Gate Study", "task_type": "CRT3",
+              "params": {"practice_trials": 1, "test_trials": 2}},
         headers=researcher_headers,
     )
-    assert resp.status_code == 201, resp.text
-    sessions = sorted(resp.json(), key=lambda s: s["order_index"])
-    session1, session2 = sessions
+    assert study_resp.status_code == 201, study_resp.text
+    study = study_resp.json()
+
+    part_resp = client.post(
+        f"/api/v1/studies/{study['id']}/participants", json={"count": 1},
+        headers=researcher_headers,
+    )
+    assert part_resp.status_code == 201, part_resp.text
+    participant = part_resp.json()[0]
+
+    pw_resp = client.post(
+        "/api/v1/auth/participant/set-password",
+        json={"code": participant["code"], "password": "activation-test-pw"},
+    )
+    assert pw_resp.status_code == 200, pw_resp.text
+    participant_headers = {"Authorization": f"Bearer {pw_resp.json()['access_token']}"}
+
+    sessions = create_sessions_orm(client, researcher_headers, study, participant, count=2)
+    session1, session2 = sessions[0], sessions[1]
 
     # Neither session is activated yet → 403 for both.
     resp2 = client.post(f"/api/v1/sessions/{session1['id']}/start", headers=participant_headers)
@@ -339,13 +349,8 @@ def test_complete_with_invalid_trial_requeue_arithmetic(
     assert resp3.status_code == 200, resp3.text
     requeue_headers = {"Authorization": f"Bearer {resp3.json()['access_token']}"}
 
-    resp4 = client.post(
-        f"/api/v1/studies/{requeue_study['id']}/sessions",
-        json={"participant_ids": [p["id"]], "count": 1},
-        headers=researcher_headers,
-    )
-    assert resp4.status_code == 201, resp4.text
-    requeue_session = resp4.json()[0]
+    requeue_sessions = create_sessions_orm(client, researcher_headers, requeue_study, p, count=1)
+    requeue_session = requeue_sessions[0]
 
     # MOD-5: activate before starting.
     activate_session(client, researcher_headers, requeue_session["id"])
@@ -464,14 +469,8 @@ def test_demographics_due_once_field_only_for_first_session(
     )
     headers = {"Authorization": f"Bearer {resp4.json()['access_token']}"}
 
-    resp5 = client.post(
-        f"/api/v1/studies/{demo_study['id']}/sessions",
-        json={"participant_ids": [p["id"]], "count": 2},
-        headers=researcher_headers,
-    )
-    assert resp5.status_code == 201, resp5.text
-    sessions = sorted(resp5.json(), key=lambda s: s["order_index"])
-    session1, session2 = sessions
+    demo_sessions = create_sessions_orm(client, researcher_headers, demo_study, p, count=2)
+    session1, session2 = demo_sessions[0], demo_sessions[1]
 
     # MOD-5: activate session1 before starting.
     activate_session(client, researcher_headers, session1["id"])

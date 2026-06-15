@@ -93,19 +93,3 @@ def build_protocol_specs(
     return specs
 
 
-def ad_hoc_label_fields(order_index: int, sessions_per_week: int) -> dict[str, Any]:
-    """Default label fields for non-protocol sessions created via API #15 (D1).
-
-    These sessions have no real protocol position, so we default them to a
-    ``pre``-typed session keyed off ``order_index`` and a generic label that the
-    researcher can edit afterwards.
-    """
-    week, day = compute_week_day(order_index, sessions_per_week)
-    return {
-        "session_type": "pre",
-        "intervention_session_number": order_index,
-        "week_number": week,
-        "day_within_week": day,
-        "display_label": f"Session {order_index}",
-        "display_label_overridden": False,
-    }

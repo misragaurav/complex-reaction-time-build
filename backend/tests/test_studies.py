@@ -93,8 +93,8 @@ def test_archived_study_rejects_new_sessions(
     assert resp.json()["is_archived"] is True
 
     resp2 = client.post(
-        f"/api/v1/studies/{study['id']}/sessions",
-        json={"participant_ids": [participant["id"]], "count": 1},
+        f"/api/v1/studies/{study['id']}/generate-protocol",
+        json={"participant_ids": [participant["id"]]},
         headers=researcher_headers,
     )
     assert resp2.status_code == 409
