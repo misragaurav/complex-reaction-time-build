@@ -2,7 +2,7 @@ import { useState, type FormEvent } from "react";
 import { errorMessage } from "../api/client";
 import { studiesApi } from "../api/studies";
 import type { StudyOut, TaskParams, TaskType } from "../api/types";
-import { Button, ErrorBanner, Field, inputClass, selectClass, SuccessBanner } from "../components/forms";
+import { Button, ErrorBanner, Field, inputClass, SuccessBanner } from "../components/forms";
 import TaskParamsEditor, { validateParams } from "../components/TaskParamsEditor";
 
 const TASK_TYPE_LABELS: Record<TaskType, string> = {
@@ -143,15 +143,10 @@ function ProtocolConfigForm({
 }): JSX.Element {
   const [num, setNum] = useState(study.num_intervention_sessions);
   const [perWeek, setPerWeek] = useState(study.sessions_per_week);
-  const [taskType, setTaskType] = useState<TaskType>(study.task_type_pre);
-  const [warnDismissed, setWarnDismissed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const locked = study.protocol_locked;
-  const hasInconsistentTypes =
-    study.task_type_onboarding !== study.task_type_pre ||
-    study.task_type_pre !== study.task_type_post;
 
   const multipleOfError =
     perWeek > 0 && num % perWeek !== 0
@@ -171,9 +166,6 @@ function ProtocolConfigForm({
       const updated = await studiesApi.update(study.id, {
         num_intervention_sessions: num,
         sessions_per_week: perWeek,
-        task_type_onboarding: taskType,
-        task_type_pre: taskType,
-        task_type_post: taskType,
       });
       onChange(updated);
       setSuccess("Saved.");
@@ -193,24 +185,17 @@ function ProtocolConfigForm({
           read-only.
         </div>
       )}
-      {hasInconsistentTypes && !locked && !warnDismissed && (
-        <div className="flex items-start justify-between gap-2 rounded border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">
-          <span>
-            This study's task types were previously configured differently across session phases.
-            The value shown below will be applied to all phases when you save.
-          </span>
-          <button
-            type="button"
-            className="shrink-0 text-blue-600 hover:text-blue-800"
-            onClick={() => setWarnDismissed(true)}
-          >
-            ×
-          </button>
-        </div>
-      )}
       <ErrorBanner message={error} />
       <SuccessBanner message={success} />
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Field label="Task type" hint="All session stages (onboarding, pre, post) use this task type.">
+          <input
+            className={`${inputClass} bg-gray-100 text-gray-500`}
+            value={TASK_TYPE_LABELS[study.task_type]}
+            disabled
+            readOnly
+          />
+        </Field>
         <Field label="Intervention sessions" hint="1–156. Must be a multiple of sessions per week.">
           <input
             type="number"
@@ -232,20 +217,6 @@ function ProtocolConfigForm({
             disabled={locked}
             onChange={(e) => setPerWeek(e.target.valueAsNumber || 0)}
           />
-        </Field>
-        <Field label="Task type">
-          <select
-            className={`${selectClass}${locked ? " bg-gray-100 text-gray-500" : ""}`}
-            value={taskType}
-            disabled={locked}
-            onChange={(e) => setTaskType(e.target.value as TaskType)}
-          >
-            {(Object.keys(TASK_TYPE_LABELS) as TaskType[]).map((t) => (
-              <option key={t} value={t}>
-                {TASK_TYPE_LABELS[t]}
-              </option>
-            ))}
-          </select>
         </Field>
       </div>
       {multipleOfError && <p className="text-sm text-red-600">{multipleOfError}</p>}

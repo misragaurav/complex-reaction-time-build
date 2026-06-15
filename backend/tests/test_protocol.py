@@ -78,21 +78,17 @@ def test_protocol_config_defaults_and_roundtrip(
     study = _create_study(client, researcher_headers)
     assert study["num_intervention_sessions"] == 24
     assert study["sessions_per_week"] == 3
-    assert study["task_type_onboarding"] == "CRT4"
-    assert study["task_type_pre"] == "CRT4"
-    assert study["task_type_post"] == "CRT4"
     assert study["protocol_locked"] is False
 
-    # Update + GET round-trip.
+    # Update + GET round-trip (MOD-7: per-stage task_type fields removed).
     resp = client.patch(
         f"/api/v1/studies/{study['id']}",
-        json={"sessions_per_week": 2, "num_intervention_sessions": 24, "task_type_pre": "SRT"},
+        json={"sessions_per_week": 2, "num_intervention_sessions": 24},
         headers=researcher_headers,
     )
     assert resp.status_code == 200, resp.text
     got = client.get(f"/api/v1/studies/{study['id']}", headers=researcher_headers).json()
     assert got["sessions_per_week"] == 2
-    assert got["task_type_pre"] == "SRT"
 
 
 # ---- MAC-12: multiple-of rule + post-generation lock ----------------------
@@ -289,23 +285,22 @@ def test_generate_protocol_week_start_offset(
     assert sessions[2]["display_label"] == "Week 2 · Day 1 · Pre"
 
 
-def test_generate_protocol_task_type_overrides(
+def test_generate_protocol_all_sessions_inherit_study_task_type(
     client: TestClient, researcher_headers: dict[str, str]
 ) -> None:
-    # Study is CRT4; generate with SRT pre/post and CRT2 onboarding.
+    # MOD-7: per-stage task_type overrides removed; all sessions inherit study.task_type.
     study = _create_study(client, researcher_headers, num_intervention_sessions=3, sessions_per_week=3)
     _add_participants(client, researcher_headers, study["id"], 1)
     resp = client.post(
         f"/api/v1/studies/{study['id']}/generate-protocol",
-        json={"task_type_onboarding": "CRT2", "task_type_pre": "SRT", "task_type_post": "SRT"},
+        json={},
         headers=researcher_headers,
     )
     assert resp.status_code == 201, resp.text
     sessions = _sessions_by_order(client, researcher_headers, study["id"])
-    assert sessions[1]["task_type"] == "CRT2"  # onboarding
-    assert sessions[2]["task_type"] == "SRT"  # pre(1)
-    assert sessions[2]["params"]["key_map"] == ["Space"]  # SRT key_map snapshot
-    assert sessions[3]["task_type"] == "SRT"  # post(1)
+    study_task_type = study["task_type"]
+    for s in sessions.values():
+        assert s["task_type"] == study_task_type
 
 
 # ---- MAC-19: participant-facing labelling ---------------------------------

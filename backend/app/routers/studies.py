@@ -78,9 +78,6 @@ def _study_to_out(db: DbDep, study: Study) -> StudyOut:
         params=study.params,
         num_intervention_sessions=study.num_intervention_sessions,
         sessions_per_week=study.sessions_per_week,
-        task_type_onboarding=study.task_type_onboarding,
-        task_type_pre=study.task_type_pre,
-        task_type_post=study.task_type_post,
         protocol_locked=_protocol_locked(db, study.id),
         created_by=study.created_by,
         is_archived=study.is_archived,
@@ -119,9 +116,6 @@ def create_study(payload: StudyCreate, user: CurrentUserDep, db: DbDep) -> Study
         params=params,
         num_intervention_sessions=payload.num_intervention_sessions,
         sessions_per_week=payload.sessions_per_week,
-        task_type_onboarding=payload.task_type_onboarding,
-        task_type_pre=payload.task_type_pre,
-        task_type_post=payload.task_type_post,
         created_by=user.id,
         is_archived=False,
     )
@@ -171,9 +165,6 @@ def update_study(
         for k, v in (
             ("num_intervention_sessions", payload.num_intervention_sessions),
             ("sessions_per_week", payload.sessions_per_week),
-            ("task_type_onboarding", payload.task_type_onboarding),
-            ("task_type_pre", payload.task_type_pre),
-            ("task_type_post", payload.task_type_post),
         )
         if v is not None
     }

@@ -108,26 +108,14 @@ export interface UserOut {
 
 // ---- studies.py ---------------------------------------------------------------
 
-// MOD-3 protocol configuration (shared by create/update/out).
-export interface ProtocolConfig {
-  num_intervention_sessions: number;
-  sessions_per_week: number;
-  task_type_onboarding: TaskType;
-  task_type_pre: TaskType;
-  task_type_post: TaskType;
-}
-
 export interface StudyCreate {
   name: string;
   description?: string | null;
   task_type: TaskType;
   params?: TaskParamsInput | null;
-  // MOD-3 (optional; server-defaulted to 24 / 3 / CRT4×3).
+  // MOD-3 (optional; server-defaulted to 24 / 3).
   num_intervention_sessions?: number;
   sessions_per_week?: number;
-  task_type_onboarding?: TaskType;
-  task_type_pre?: TaskType;
-  task_type_post?: TaskType;
 }
 
 export interface StudyUpdate {
@@ -138,9 +126,6 @@ export interface StudyUpdate {
   // MOD-3 (subject to the post-generation lock).
   num_intervention_sessions?: number;
   sessions_per_week?: number;
-  task_type_onboarding?: TaskType;
-  task_type_pre?: TaskType;
-  task_type_post?: TaskType;
 }
 
 export interface StudyCounts {
@@ -159,9 +144,6 @@ export interface StudyOut {
   // MOD-3 protocol configuration.
   num_intervention_sessions: number;
   sessions_per_week: number;
-  task_type_onboarding: TaskType;
-  task_type_pre: TaskType;
-  task_type_post: TaskType;
   protocol_locked: boolean;
   created_by: string;
   is_archived: boolean;
@@ -176,9 +158,6 @@ export interface GenerateProtocolRequest {
   participant_ids?: string[];
   num_intervention_sessions?: number;
   week_start?: number;
-  task_type_onboarding?: TaskType;
-  task_type_pre?: TaskType;
-  task_type_post?: TaskType;
 }
 
 export interface ProtocolCreatedItem {

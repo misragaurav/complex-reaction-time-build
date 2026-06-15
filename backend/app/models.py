@@ -72,15 +72,6 @@ class Study(Base):
     sessions_per_week: Mapped[int] = mapped_column(
         Integer, nullable=False, default=3, server_default="3"
     )
-    task_type_onboarding: Mapped[str] = mapped_column(
-        String(10), nullable=False, default="CRT4", server_default="CRT4"
-    )
-    task_type_pre: Mapped[str] = mapped_column(
-        String(10), nullable=False, default="CRT4", server_default="CRT4"
-    )
-    task_type_post: Mapped[str] = mapped_column(
-        String(10), nullable=False, default="CRT4", server_default="CRT4"
-    )
     created_by: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("users.id"), nullable=False)
     is_archived: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime.datetime] = mapped_column(
@@ -100,15 +91,6 @@ class Study(Base):
             name="ck_studies_num_intervention_sessions",
         ),
         CheckConstraint("sessions_per_week BETWEEN 1 AND 7", name="ck_studies_sessions_per_week"),
-        CheckConstraint(
-            "task_type_onboarding IN ('SRT','CRT2','CRT3','CRT4')", name="ck_studies_tt_onboarding"
-        ),
-        CheckConstraint(
-            "task_type_pre IN ('SRT','CRT2','CRT3','CRT4')", name="ck_studies_tt_pre"
-        ),
-        CheckConstraint(
-            "task_type_post IN ('SRT','CRT2','CRT3','CRT4')", name="ck_studies_tt_post"
-        ),
     )
 
     creator: Mapped["User"] = relationship(back_populates="studies")

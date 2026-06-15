@@ -157,12 +157,11 @@ def generate_protocol(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="num_intervention_sessions must be a multiple of sessions_per_week",
         )
-    tt_onboarding = payload.task_type_onboarding or study.task_type_onboarding
-    tt_pre = payload.task_type_pre or study.task_type_pre
-    tt_post = payload.task_type_post or study.task_type_post
 
-    # MFR-18: validate every task-type/params combo BEFORE creating any session.
-    params_by_tt = {tt: _params_for_task_type(study, tt) for tt in {tt_onboarding, tt_pre, tt_post}}
+    # MOD-7: all session stages use the single study.task_type.
+    task_type = study.task_type
+    # MFR-18: validate the task-type/params combo BEFORE creating any session.
+    params_by_tt = {task_type: _params_for_task_type(study, task_type)}
 
     # Resolve target participants: explicit list, or all who have no sessions yet.
     if payload.participant_ids is not None:
@@ -190,9 +189,7 @@ def generate_protocol(
         num_intervention_sessions=num,
         sessions_per_week=study.sessions_per_week,
         week_start=payload.week_start,
-        task_type_onboarding=tt_onboarding,
-        task_type_pre=tt_pre,
-        task_type_post=tt_post,
+        task_type=task_type,
     )
 
     created_items: list[ProtocolCreatedItem] = []
