@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, select
 
 from app.deps import CurrentParticipantDep, CurrentUserDep, DbDep
-from app.models import Participant, Study, Trial
+from app.models import Group, Participant, ParticipantGroupAssignment, Study, Trial
 from app.models import Session as SessionModel
 from app.schemas.common import merge_and_validate_params
 from app.schemas.sessions import (
@@ -70,10 +70,21 @@ def _sessions_to_out(db: DbDep, sessions: list[SessionModel]) -> list[SessionOut
     ).scalars().all()
     participants_by_id = {p.id: p for p in participants}
 
+    # MOD-11: fetch current group assignment for all participant IDs in one query.
+    group_rows = db.execute(
+        select(ParticipantGroupAssignment.participant_id, Group.id, Group.name)
+        .join(Group, ParticipantGroupAssignment.group_id == Group.id)
+        .where(ParticipantGroupAssignment.participant_id.in_(participant_ids))
+    ).all()
+    group_info: dict[uuid.UUID, tuple[uuid.UUID, str]] = {
+        row.participant_id: (row.id, row.name) for row in group_rows
+    }
+
     out: list[SessionOut] = []
     for session in sessions:
         summary = compute_session_summary(session, trials_by_session[session.id])
         participant = participants_by_id[session.participant_id]
+        g = group_info.get(session.participant_id)
         out.append(
             SessionOut(
                 id=session.id,
@@ -100,6 +111,8 @@ def _sessions_to_out(db: DbDep, sessions: list[SessionModel]) -> list[SessionOut
                 expired_at=session.expired_at,
                 created_at=session.created_at,
                 stats=session_stats_brief(summary),
+                group_id=g[0] if g else None,
+                group_name=g[1] if g else None,
             )
         )
     return out

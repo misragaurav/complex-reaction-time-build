@@ -445,6 +445,9 @@ export interface SessionOut {
   expired_at: string | null; // MOD-5
   created_at: string;
   stats: SessionStatsBrief;
+  // MOD-11: group membership at query time (null when unassigned).
+  group_id: string | null;
+  group_name: string | null;
 }
 
 /** `{action: "reset" | "cancel"}` per API #17 (FR-22/23); MOD-3 adds the

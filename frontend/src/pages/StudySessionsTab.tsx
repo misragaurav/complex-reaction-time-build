@@ -115,14 +115,14 @@ type SessionGroup = {
 function groupSessions(
   sessions: SessionOut[],
   mode: "participant" | "group",
-  groupMap: Map<string, string | null>,
 ): SessionGroup[] {
   const buckets = new Map<string, SessionOut[]>();
   for (const s of sessions) {
+    // MOD-11: group_name comes directly from the session (populated via server-side join).
     const key =
       mode === "participant"
         ? s.participant_code
-        : (groupMap.get(s.participant_id) ?? "__unassigned__");
+        : (s.group_name ?? "__unassigned__");
     const bucket = buckets.get(key);
     if (bucket) bucket.push(s);
     else buckets.set(key, [s]);
@@ -421,13 +421,15 @@ export default function StudySessionsTab({ study }: { study: StudyOut }): JSX.El
     setCollapsed(new Set());
   }, [groupMode]);
 
-  const groupMap = useMemo(() => {
-    const map = new Map<string, string | null>();
-    for (const p of participants) {
-      map.set(p.id, p.group_name);
+  // MOD-11: refetch sessions when the window regains focus so that a reassignment
+  // made on another tab is reflected immediately without a hard page reload.
+  useEffect(() => {
+    function handleFocus(): void {
+      reload();
     }
-    return map;
-  }, [participants]);
+    window.addEventListener("focus", handleFocus);
+    return () => window.removeEventListener("focus", handleFocus);
+  }, [reload]);
 
   const sorted = useMemo(
     () => (sessions ? sortSessions(sessions, sortField, sortDir) : []),
@@ -435,8 +437,8 @@ export default function StudySessionsTab({ study }: { study: StudyOut }): JSX.El
   );
 
   const groups = useMemo(
-    () => (groupMode !== "none" ? groupSessions(sorted, groupMode, groupMap) : []),
-    [sorted, groupMode, groupMap],
+    () => (groupMode !== "none" ? groupSessions(sorted, groupMode) : []),
+    [sorted, groupMode],
   );
 
   function handleSort(field: SortField): void {

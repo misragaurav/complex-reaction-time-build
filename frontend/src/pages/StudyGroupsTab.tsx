@@ -90,6 +90,12 @@ function GroupDetailPanel({
     load();
   }, [load]);
 
+  // MOD-11: refetch member list when window regains focus.
+  useEffect(() => {
+    window.addEventListener("focus", load);
+    return () => window.removeEventListener("focus", load);
+  }, [load]);
+
   async function setCis(value: number | null): Promise<void> {
     setError(null);
     setSuccess(null);
@@ -272,6 +278,16 @@ export default function StudyGroupsTab({ study }: { study: StudyOut }): JSX.Elem
 
   useEffect(() => {
     reload();
+  }, [reload]);
+
+  // MOD-11: refetch on window focus so that a reassignment done in another tab
+  // is visible immediately in both the list and the open detail panel.
+  useEffect(() => {
+    function handleFocus(): void {
+      reload();
+    }
+    window.addEventListener("focus", handleFocus);
+    return () => window.removeEventListener("focus", handleFocus);
   }, [reload]);
 
   return (
