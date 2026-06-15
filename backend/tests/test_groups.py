@@ -65,12 +65,14 @@ def test_create_group_and_unique_name(client: TestClient, researcher_headers: di
     assert ok.status_code == 201, ok.text
 
 
-# ---- MAC-21 / MAC-24: one group per participant, reassignment 409 ---------
+# ---- MAC-21 / v2-Change-2: one group per participant, reassign-when-not-started ----
 
 
-def test_assign_and_reassignment_conflict(
+def test_assign_and_reassignment_when_no_sessions_started(
     client: TestClient, researcher_headers: dict[str, str]
 ) -> None:
+    """v2 Change 2: reassigning a participant with no started sessions succeeds
+    (previously returned 409; now returns 200 with participant in 'reassigned')."""
     study = _study(client, researcher_headers)
     parts = _participants(client, researcher_headers, study["id"], 2)
     g1 = _group(client, researcher_headers, study["id"], "Group A")
@@ -86,32 +88,36 @@ def test_assign_and_reassignment_conflict(
     assert len(resp.json()["assigned"]) == 2
     assert resp.json()["conflicts"] == []
 
-    # Reassigning a single already-assigned participant to g2 -> 409 with the
-    # existing group name in the message.
+    # Reassigning to g2 with no sessions started → success, participant in 'reassigned'.
     resp = client.post(
         f"/api/v1/groups/{g2['id']}/assign",
         json={"participant_ids": [parts[0]["id"]]},
         headers=researcher_headers,
     )
-    assert resp.status_code == 409, resp.text
-    assert "Group A" in resp.json()["detail"]
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    reassigned_ids = [r["participant_id"] for r in body["reassigned"]]
+    assert parts[0]["id"] in reassigned_ids
+    assert body["conflicts"] == []
 
 
-def test_assign_batch_partial_conflict_is_200(
+def test_assign_batch_partial_reassignment_is_200(
     client: TestClient, researcher_headers: dict[str, str]
 ) -> None:
+    """v2 Change 2: batch assign where one participant has no started sessions
+    is reassigned (not returned as a conflict)."""
     study = _study(client, researcher_headers)
     parts = _participants(client, researcher_headers, study["id"], 2)
     g1 = _group(client, researcher_headers, study["id"], "Group A")
     g2 = _group(client, researcher_headers, study["id"], "Group B")
 
-    # parts[0] already in g1.
+    # parts[0] already in g1, no sessions started.
     client.post(
         f"/api/v1/groups/{g1['id']}/assign",
         json={"participant_ids": [parts[0]["id"]]},
         headers=researcher_headers,
     )
-    # Batch to g2: one new (parts[1]) + one conflict (parts[0]) -> 200, split lists.
+    # Batch to g2: parts[1] new, parts[0] reassigned → both succeed.
     resp = client.post(
         f"/api/v1/groups/{g2['id']}/assign",
         json={"participant_ids": [parts[0]["id"], parts[1]["id"]]},
@@ -120,7 +126,9 @@ def test_assign_batch_partial_conflict_is_200(
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert [a["participant_id"] for a in body["assigned"]] == [parts[1]["id"]]
-    assert [c["participant_id"] for c in body["conflicts"]] == [parts[0]["id"]]
+    reassigned_ids = [r["participant_id"] for r in body["reassigned"]]
+    assert parts[0]["id"] in reassigned_ids
+    assert body["conflicts"] == []
 
 
 def test_participant_out_reflects_group(

@@ -1,4 +1,4 @@
-import { expireSession, getAccessToken, setAccessToken } from "./tokenStore";
+import { expireSession, getAccessToken, getIdentityKind, setAccessToken } from "./tokenStore";
 
 export const API_BASE = "/api/v1";
 
@@ -87,7 +87,9 @@ let refreshPromise: Promise<string | null> | null = null;
 
 function refreshAccessToken(): Promise<string | null> {
   if (!refreshPromise) {
-    refreshPromise = fetch(`${API_BASE}/auth/refresh`, {
+    const kind = getIdentityKind();
+    const endpoint = kind === "participant" ? "/auth/participant/refresh" : "/auth/refresh";
+    refreshPromise = fetch(`${API_BASE}${endpoint}`, {
       method: "POST",
       credentials: "include",
     })
