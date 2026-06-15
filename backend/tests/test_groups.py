@@ -13,7 +13,7 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
-from .helpers import run_to_completion
+from .helpers import create_sessions_orm, run_to_completion
 
 
 def _study(client: TestClient, headers: dict[str, str], **body: Any) -> dict[str, Any]:
@@ -240,12 +240,7 @@ def _create_completed(
         json={"code": parts[0]["code"], "password": "group-participant-pw"},
     )
     p_headers = {"Authorization": f"Bearer {resp.json()['access_token']}"}
-    resp = client.post(
-        f"/api/v1/studies/{study['id']}/sessions",
-        json={"participant_ids": [parts[0]["id"]], "count": 1},
-        headers=headers,
-    )
-    sessions = resp.json()
+    sessions = create_sessions_orm(client, headers, study, parts[0], count=1)
     # MOD-5: activate before starting; pass researcher headers so run_to_completion activates.
     run_to_completion(
         client, p_headers, sessions[0]["id"], practice_trials=0, test_trials=3,

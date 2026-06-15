@@ -1,5 +1,6 @@
 import { api } from "./client";
 import type {
+  GroupActivateRequest,
   GroupActivateResponse,
   GroupAssignRequest,
   GroupAssignResponse,
@@ -23,8 +24,10 @@ export const groupsApi = {
   assign: (groupId: string, payload: GroupAssignRequest): Promise<GroupAssignResponse> =>
     api.post<GroupAssignResponse>(`/groups/${groupId}/assign`, payload),
   // MOD-5: group-level activation (MFR-31/32).
-  activate: (groupId: string): Promise<GroupActivateResponse> =>
-    api.post<GroupActivateResponse>(`/groups/${groupId}/activate`, {}),
+  activate: (groupId: string, sessionType: "pre" | "post" = "pre"): Promise<GroupActivateResponse> =>
+    api.post<GroupActivateResponse>(`/groups/${groupId}/activate`, {
+      session_type: sessionType,
+    } satisfies GroupActivateRequest),
   deactivate: (groupId: string, force = false): Promise<GroupDeactivateResponse> =>
     api.post<GroupDeactivateResponse>(`/groups/${groupId}/deactivate`, {
       force,

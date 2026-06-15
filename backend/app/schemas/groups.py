@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime
 import uuid
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -71,12 +72,34 @@ class ConflictItem(BaseModel):
     current_group_name: str
 
 
+class ReassignedItem(BaseModel):
+    participant_id: uuid.UUID
+    code: str
+    previous_group_name: str
+    new_group_name: str
+
+
+class BlockedItem(BaseModel):
+    participant_id: uuid.UUID
+    code: str
+    current_group_name: str
+    reason: str
+
+
 class GroupAssignResponse(BaseModel):
     assigned: list[AssignedItem]
     conflicts: list[ConflictItem]
+    reassigned: list[ReassignedItem]
+    blocked: list[BlockedItem]
 
 
 # MOD-5: group activation/deactivation schemas (MFR-31/32).
+
+class GroupActivateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    session_type: Literal["pre", "post"] = "pre"
+
 
 class GroupActivatedItem(BaseModel):
     participant_id: uuid.UUID
@@ -89,6 +112,7 @@ class GroupActivatedItem(BaseModel):
 
 class GroupActivateResponse(BaseModel):
     activated: list[GroupActivatedItem]
+    session_type: str
 
 
 class BlockingItem(BaseModel):

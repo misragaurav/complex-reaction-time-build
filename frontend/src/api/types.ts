@@ -336,12 +336,32 @@ export interface GroupAssignRequest {
   participant_ids: string[];
 }
 
+export interface ReassignedItem {
+  participant_id: string;
+  code: string;
+  previous_group_name: string;
+  new_group_name: string;
+}
+
+export interface BlockedItem {
+  participant_id: string;
+  code: string;
+  current_group_name: string;
+  reason: string;
+}
+
 export interface GroupAssignResponse {
   assigned: { participant_id: string; code: string }[];
   conflicts: { participant_id: string; code: string; current_group_name: string }[];
+  reassigned: ReassignedItem[];
+  blocked: BlockedItem[];
 }
 
 // MOD-5: group activation/deactivation types (MFR-31/32).
+export interface GroupActivateRequest {
+  session_type?: "pre" | "post";
+}
+
 export interface GroupActivatedItem {
   participant_id: string;
   code: string;
@@ -353,6 +373,7 @@ export interface GroupActivatedItem {
 
 export interface GroupActivateResponse {
   activated: GroupActivatedItem[];
+  session_type: string;
 }
 
 export interface BlockingItem {
@@ -388,18 +409,6 @@ export interface ParticipantUpdate {
 // ---- sessions.py ----------------------------------------------------------------
 
 export type SessionStatus = "created" | "activated" | "in_progress" | "completed" | "abandoned" | "expired" | "cancelled"; // MOD-5
-
-export interface SessionOverrides {
-  task_type?: TaskType;
-  params?: TaskParamsInput;
-}
-
-/** `{participant_ids:[...], count, overrides?:{task_type?, params?}}` per API #15. */
-export interface SessionCreateRequest {
-  participant_ids: string[];
-  count: number;
-  overrides?: SessionOverrides;
-}
 
 /** FR-50 row stats: trimmed mean RT, accuracy, and outlier-flag count. */
 export interface SessionStatsBrief {

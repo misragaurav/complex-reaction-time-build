@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 
 from app.task_defaults import default_params, render_instructions
 
-from .helpers import activate_session, make_trial, post_trials
+from .helpers import activate_session, create_sessions_orm, make_trial, post_trials
 
 SRT_KEY_MAP = ["Space"]
 
@@ -56,13 +56,12 @@ def _make_participant_session(
     assert resp2.status_code == 200, resp2.text
     p_headers = {"Authorization": f"Bearer {resp2.json()['access_token']}"}
 
-    resp3 = client.post(
-        f"/api/v1/studies/{study_id}/sessions",
-        json={"participant_ids": [participant["id"]], "count": 1},
-        headers=headers,
-    )
-    assert resp3.status_code == 201, resp3.text
-    session = resp3.json()[0]
+    study_resp = client.get(f"/api/v1/studies/{study_id}", headers=headers)
+    assert study_resp.status_code == 200, study_resp.text
+    study = study_resp.json()
+
+    sessions = create_sessions_orm(client, headers, study, participant, count=1)
+    session = sessions[0]
     # MOD-5: activate so the participant can start.
     activate_session(client, headers, session["id"])
     return session, p_headers
@@ -129,26 +128,6 @@ def test_srt_keymap_length_must_be_one(
     )
     assert resp.status_code == 422, resp.text
 
-
-def test_srt_keymap_length_validation_on_session_override(
-    client: TestClient, researcher_headers: dict[str, str]
-) -> None:
-    # A CRT study with a per-session SRT override carrying 2 keys -> 422.
-    study = _create_srt_study(client, researcher_headers, name="ovr", test_trials=2)
-    resp = client.post(
-        f"/api/v1/studies/{study['id']}/participants", json={"count": 1}, headers=researcher_headers
-    )
-    participant = resp.json()[0]
-    resp = client.post(
-        f"/api/v1/studies/{study['id']}/sessions",
-        json={
-            "participant_ids": [participant["id"]],
-            "count": 1,
-            "overrides": {"task_type": "SRT", "params": {"key_map": ["Space", "KeyX"]}},
-        },
-        headers=researcher_headers,
-    )
-    assert resp.status_code == 422, resp.text
 
 
 # ---- MAC-7 / outcome logic: correct-only, timeout, invalid ----------------

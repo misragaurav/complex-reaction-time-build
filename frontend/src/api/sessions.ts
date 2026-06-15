@@ -2,7 +2,6 @@ import { api } from "./client";
 import type {
   MySessionOut,
   SessionActionRequest,
-  SessionCreateRequest,
   SessionOut,
   SessionSort,
   SessionStatus,
@@ -15,8 +14,6 @@ export interface ListSessionsParams {
 }
 
 export const sessionsApi = {
-  create: (studyId: string, payload: SessionCreateRequest): Promise<SessionOut[]> =>
-    api.post<SessionOut[]>(`/studies/${studyId}/sessions`, payload),
   list: (studyId: string, params: ListSessionsParams = {}): Promise<SessionOut[]> =>
     api.get<SessionOut[]>(`/studies/${studyId}/sessions`, {
       status: params.status,

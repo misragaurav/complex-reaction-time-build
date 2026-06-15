@@ -8,6 +8,7 @@ import uuid
 from typing import Any
 
 from fastapi.testclient import TestClient
+from sqlalchemy import func, select
 
 KEY_MAP_CRT3 = ["KeyZ", "KeyX", "KeyC"]
 
@@ -130,6 +131,75 @@ def post_trials(
         assert resp.status_code == 200, resp.text
 
 
+def create_sessions_orm(
+    client: TestClient,
+    researcher_headers: dict[str, str],
+    study: dict[str, Any],
+    participant: dict[str, Any],
+    count: int = 1,
+) -> list[dict[str, Any]]:
+    """Insert `count` sessions directly via ORM (no ad-hoc endpoint).
+
+    Commits then closes the DB session so the TestClient app (same SQLite
+    file) sees the rows.  Returns the created sessions in SessionOut shape.
+    """
+    from app.database import SessionLocal
+    from app.models import Session as SessionModel
+    from app.models import Study as StudyModel
+    from app.schemas.common import merge_and_validate_params
+    from app.services.codes import generate_session_code
+
+    study_id = uuid.UUID(study["id"])
+    participant_id = uuid.UUID(participant["id"])
+
+    db = SessionLocal()
+    try:
+        db_study = db.get(StudyModel, study_id)
+        assert db_study is not None, f"study {study_id} not found"
+
+        params = merge_and_validate_params(db_study.task_type, db_study.params, None)  # type: ignore[arg-type]
+
+        max_order = db.execute(
+            select(func.coalesce(func.max(SessionModel.order_index), 0)).where(
+                SessionModel.participant_id == participant_id
+            )
+        ).scalar_one()
+
+        for i in range(count):
+            order_index = max_order + i + 1
+            session = SessionModel(
+                code=generate_session_code(db),
+                participant_id=participant_id,
+                study_id=study_id,
+                order_index=order_index,
+                task_type=db_study.task_type,
+                params=dict(params),
+                status="created",
+                attempt=1,
+                resume_count=0,
+                session_type="pre",
+                intervention_session_number=None,
+                week_number=None,
+                day_within_week=None,
+                display_label=f"Session {order_index}",
+                display_label_overridden=False,
+            )
+            db.add(session)
+
+        db.commit()
+    finally:
+        db.close()
+
+    resp = client.get(
+        f"/api/v1/studies/{study['id']}/sessions",
+        headers=researcher_headers,
+        params={"participant_id": participant["id"]},
+    )
+    assert resp.status_code == 200, resp.text
+    all_sessions: list[dict[str, Any]] = sorted(resp.json(), key=lambda s: s["order_index"])
+    return all_sessions[-count:]
+
+
 def create_study_participant_session(
     client: TestClient,
     headers: dict[str, str],
@@ -170,13 +240,7 @@ def create_study_participant_session(
     assert resp3.status_code == 200, resp3.text
     participant_headers = {"Authorization": f"Bearer {resp3.json()['access_token']}"}
 
-    resp4 = client.post(
-        f"/api/v1/studies/{study['id']}/sessions",
-        json={"participant_ids": [participant["id"]], "count": count},
-        headers=headers,
-    )
-    assert resp4.status_code == 201, resp4.text
-    sessions: list[dict[str, Any]] = sorted(resp4.json(), key=lambda s: s["order_index"])
+    sessions = create_sessions_orm(client, headers, study, participant, count)
 
     # MOD-5: activate all sessions so they can be started immediately.
     if activate:

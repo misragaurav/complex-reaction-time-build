@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, select
 
 from app.deps import CurrentParticipantDep, CurrentUserDep, DbDep
-from app.models import Participant, Study, Trial, User
+from app.models import Participant, Study, Trial
 from app.models import Session as SessionModel
 from app.schemas.common import merge_and_validate_params
 from app.schemas.sessions import (
@@ -19,11 +19,10 @@ from app.schemas.sessions import (
     ProtocolCreatedItem,
     ProtocolSkippedItem,
     SessionActionRequest,
-    SessionCreateRequest,
     SessionOut,
 )
 from app.services.codes import generate_session_code
-from app.services.protocol import ad_hoc_label_fields, build_protocol_specs
+from app.services.protocol import build_protocol_specs
 from app.services.sessions import apply_lazy_abandonment
 from app.services.statistics import compute_session_summary, load_test_trials, session_stats_brief
 from app.task_defaults import default_params
@@ -109,72 +108,6 @@ def _sessions_to_out(db: DbDep, sessions: list[SessionModel]) -> list[SessionOut
 def _session_to_out(db: DbDep, session: SessionModel) -> SessionOut:
     return _sessions_to_out(db, [session])[0]
 
-
-@router.post(
-    "/studies/{study_id}/sessions",
-    response_model=list[SessionOut],
-    status_code=status.HTTP_201_CREATED,
-)
-def create_sessions(
-    study_id: uuid.UUID, payload: SessionCreateRequest, user: CurrentUserDep, db: DbDep
-) -> list[SessionOut]:
-    study = db.get(Study, study_id)
-    if study is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Study not found")
-    if study.is_archived:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail="Cannot create sessions in an archived study"
-        )
-
-    effective_task_type = study.task_type
-    param_overrides = None
-    if payload.overrides is not None:
-        if payload.overrides.task_type is not None:
-            effective_task_type = payload.overrides.task_type
-        param_overrides = payload.overrides.params
-
-    params = merge_and_validate_params(effective_task_type, study.params, param_overrides)  # type: ignore[arg-type]
-
-    created: list[SessionModel] = []
-    for participant_id in payload.participant_ids:
-        participant = db.get(Participant, participant_id)
-        if participant is None or participant.study_id != study_id:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Participant {participant_id} not found in this study",
-            )
-
-        max_order = db.execute(
-            select(func.coalesce(func.max(SessionModel.order_index), 0)).where(
-                SessionModel.participant_id == participant_id
-            )
-        ).scalar_one()
-
-        for i in range(payload.count):
-            order_index = max_order + i + 1
-            # MOD-3 / D1: ad-hoc sessions get default label fields (researcher
-            # can relabel afterwards). Protocol sessions go via #33 instead.
-            label_fields = ad_hoc_label_fields(order_index, study.sessions_per_week)
-            session = SessionModel(
-                code=generate_session_code(db),
-                participant_id=participant_id,
-                study_id=study_id,
-                order_index=order_index,
-                task_type=effective_task_type,
-                params=dict(params),
-                status="created",
-                attempt=1,
-                resume_count=0,
-                **label_fields,
-            )
-            db.add(session)
-            db.flush()
-            created.append(session)
-
-    db.commit()
-    for s in created:
-        db.refresh(s)
-    return _sessions_to_out(db, created)
 
 
 def _params_for_task_type(study: Study, task_type: str) -> dict[str, Any]:
