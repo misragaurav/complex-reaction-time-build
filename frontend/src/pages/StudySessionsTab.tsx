@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
 import { errorMessage } from "../api/client";
 import { exportsApi } from "../api/exports";
 import { participantsApi } from "../api/participants";
@@ -6,7 +7,6 @@ import { sessionsApi } from "../api/sessions";
 import type {
   ParticipantOut,
   SessionOut,
-  SessionSort,
   SessionStatus,
   StudyOut,
 } from "../api/types";
@@ -33,20 +33,128 @@ const STATUS_BADGE_CLASSES: Record<SessionStatus, string> = {
   cancelled: "bg-gray-100 text-gray-400",
 };
 
-const SORT_OPTIONS: { value: SessionSort; label: string }[] = [
-  { value: "participant_code", label: "Participant code" },
-  { value: "order_index", label: "Session number" },
-  { value: "status", label: "Status" },
-  { value: "-created_at", label: "Newest first" },
-  { value: "-started_at", label: "Recently started" },
-  { value: "-completed_at", label: "Recently completed" },
-];
+type SortField =
+  | "participant_code"
+  | "order_index"
+  | "display_label"
+  | "session_type"
+  | "code"
+  | "task_type"
+  | "status"
+  | "attempt"
+  | "activated_at"
+  | "completed_at"
+  | "trimmed_mean_rt_ms"
+  | "accuracy_pct";
+
+const SESSION_TYPE_ORDER: Record<string, number> = {
+  onboarding: 0,
+  pre: 1,
+  post: 2,
+};
+
+function getFieldValue(session: SessionOut, field: SortField): string | number | null {
+  switch (field) {
+    case "participant_code":
+      return session.participant_code.toLowerCase();
+    case "order_index":
+      return session.order_index;
+    case "display_label":
+      return session.display_label.toLowerCase();
+    case "session_type":
+      return SESSION_TYPE_ORDER[session.session_type] ?? 0;
+    case "code":
+      return session.code;
+    case "task_type":
+      return session.task_type;
+    case "status":
+      return session.status;
+    case "attempt":
+      return session.attempt;
+    case "activated_at":
+      return session.activated_at;
+    case "completed_at":
+      return session.completed_at;
+    case "trimmed_mean_rt_ms":
+      return session.stats.trimmed_mean_rt_ms;
+    case "accuracy_pct":
+      return session.stats.accuracy_pct;
+  }
+}
+
+function sortSessions(
+  sessions: SessionOut[],
+  field: SortField,
+  dir: "asc" | "desc",
+): SessionOut[] {
+  return [...sessions].sort((a, b) => {
+    const av = getFieldValue(a, field);
+    const bv = getFieldValue(b, field);
+    if (av === null && bv === null) return 0;
+    if (av === null) return 1;
+    if (bv === null) return -1;
+    let cmp = 0;
+    if (typeof av === "string" && typeof bv === "string") {
+      cmp = av < bv ? -1 : av > bv ? 1 : 0;
+    } else if (typeof av === "number" && typeof bv === "number") {
+      cmp = av - bv;
+    }
+    return dir === "asc" ? cmp : -cmp;
+  });
+}
+
+type SessionGroup = {
+  key: string;
+  label: string;
+  total: number;
+  completed: number;
+  members: number;
+  sessions: SessionOut[];
+};
+
+function groupSessions(
+  sessions: SessionOut[],
+  mode: "participant" | "group",
+  groupMap: Map<string, string | null>,
+): SessionGroup[] {
+  const buckets = new Map<string, SessionOut[]>();
+  for (const s of sessions) {
+    const key =
+      mode === "participant"
+        ? s.participant_code
+        : (groupMap.get(s.participant_id) ?? "__unassigned__");
+    const bucket = buckets.get(key);
+    if (bucket) bucket.push(s);
+    else buckets.set(key, [s]);
+  }
+
+  const result: SessionGroup[] = [];
+  for (const [key, slist] of buckets) {
+    const completed = slist.filter((s) => s.status === "completed").length;
+    const members = new Set(slist.map((s) => s.participant_id)).size;
+    result.push({
+      key,
+      label: key === "__unassigned__" ? "Unassigned" : key,
+      total: slist.length,
+      completed,
+      members,
+      sessions: slist,
+    });
+  }
+
+  result.sort((a, b) => {
+    if (a.key === "__unassigned__") return 1;
+    if (b.key === "__unassigned__") return -1;
+    return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
+  });
+
+  return result;
+}
 
 function formatTimestamp(iso: string | null): string {
   if (!iso) return "—";
   return new Date(iso).toLocaleString();
 }
-
 
 function SessionRow({
   session,
@@ -251,24 +359,51 @@ function SessionRow({
   );
 }
 
+function SortableTh({
+  field,
+  sortField,
+  sortDir,
+  onSort,
+  children,
+}: {
+  field: SortField;
+  sortField: SortField;
+  sortDir: "asc" | "desc";
+  onSort: (field: SortField) => void;
+  children: ReactNode;
+}): JSX.Element {
+  const active = field === sortField;
+  return (
+    <th
+      className="cursor-pointer select-none px-4 py-3 hover:bg-gray-50"
+      onClick={() => onSort(field)}
+    >
+      {children}
+      {active && <span className="ml-1">{sortDir === "asc" ? "▲" : "▼"}</span>}
+    </th>
+  );
+}
+
 export default function StudySessionsTab({ study }: { study: StudyOut }): JSX.Element {
   const [sessions, setSessions] = useState<SessionOut[] | null>(null);
   const [participants, setParticipants] = useState<ParticipantOut[]>([]);
   const [statusFilter, setStatusFilter] = useState<SessionStatus | "">("");
   const [participantFilter, setParticipantFilter] = useState("");
-  const [sort, setSort] = useState<SessionSort>("participant_code");
   const [error, setError] = useState<string | null>(null);
+  const [groupMode, setGroupMode] = useState<"none" | "participant" | "group">("none");
+  const [sortField, setSortField] = useState<SortField>("participant_code");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
   const reload = useCallback((): void => {
     sessionsApi
       .list(study.id, {
         status: statusFilter === "" ? undefined : statusFilter,
         participantId: participantFilter === "" ? undefined : participantFilter,
-        sort,
       })
       .then(setSessions)
       .catch((err: unknown) => setError(errorMessage(err)));
-  }, [study.id, statusFilter, participantFilter, sort]);
+  }, [study.id, statusFilter, participantFilter]);
 
   useEffect(() => {
     setError(null);
@@ -281,6 +416,48 @@ export default function StudySessionsTab({ study }: { study: StudyOut }): JSX.El
       .then(setParticipants)
       .catch((err: unknown) => setError(errorMessage(err)));
   }, [study.id]);
+
+  useEffect(() => {
+    setCollapsed(new Set());
+  }, [groupMode]);
+
+  const groupMap = useMemo(() => {
+    const map = new Map<string, string | null>();
+    for (const p of participants) {
+      map.set(p.id, p.group_name);
+    }
+    return map;
+  }, [participants]);
+
+  const sorted = useMemo(
+    () => (sessions ? sortSessions(sessions, sortField, sortDir) : []),
+    [sessions, sortField, sortDir],
+  );
+
+  const groups = useMemo(
+    () => (groupMode !== "none" ? groupSessions(sorted, groupMode, groupMap) : []),
+    [sorted, groupMode, groupMap],
+  );
+
+  function handleSort(field: SortField): void {
+    if (field === sortField) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortField(field);
+      setSortDir("asc");
+    }
+  }
+
+  function toggleSection(key: string): void {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  const thProps = { sortField, sortDir, onSort: handleSort };
 
   return (
     <div className="space-y-6">
@@ -302,7 +479,11 @@ export default function StudySessionsTab({ study }: { study: StudyOut }): JSX.El
           </select>
         </Field>
         <Field label="Participant">
-          <select className={selectClass} value={participantFilter} onChange={(e) => setParticipantFilter(e.target.value)}>
+          <select
+            className={selectClass}
+            value={participantFilter}
+            onChange={(e) => setParticipantFilter(e.target.value)}
+          >
             <option value="">All</option>
             {participants.map((p) => (
               <option key={p.id} value={p.id}>
@@ -311,15 +492,35 @@ export default function StudySessionsTab({ study }: { study: StudyOut }): JSX.El
             ))}
           </select>
         </Field>
-        <Field label="Sort by">
-          <select className={selectClass} value={sort} onChange={(e) => setSort(e.target.value as SessionSort)}>
-            {SORT_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
+        <div className="flex flex-col gap-1">
+          <span className="text-xs font-medium uppercase tracking-wide text-gray-500">Group by</span>
+          <div className="flex gap-3">
+            {(["none", "participant", "group"] as const).map((m) => (
+              <label key={m} className="flex items-center gap-1.5 text-sm text-gray-700">
+                <input
+                  type="radio"
+                  name="sessions-group-by"
+                  checked={groupMode === m}
+                  onChange={() => setGroupMode(m)}
+                />
+                {m === "none" ? "None" : m === "participant" ? "Participant" : "Group"}
+              </label>
             ))}
-          </select>
-        </Field>
+          </div>
+        </div>
+        {groupMode !== "none" && (
+          <div className="flex gap-2">
+            <Button
+              variant="secondary"
+              onClick={() => setCollapsed(new Set(groups.map((g) => g.key)))}
+            >
+              Collapse all
+            </Button>
+            <Button variant="secondary" onClick={() => setCollapsed(new Set())}>
+              Expand all
+            </Button>
+          </div>
+        )}
       </div>
 
       {!sessions ? (
@@ -331,30 +532,54 @@ export default function StudySessionsTab({ study }: { study: StudyOut }): JSX.El
           <table className="min-w-full divide-y divide-gray-200">
             <thead>
               <tr className="text-left text-xs font-medium uppercase tracking-wide text-gray-500">
-                <th className="px-4 py-3">Participant</th>
-                <th className="px-4 py-3">#</th>
-                <th className="px-4 py-3">Label</th>
-                <th className="px-4 py-3">Type</th>
-                <th className="px-4 py-3">Code</th>
-                <th className="px-4 py-3">Task</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Attempt</th>
-                <th className="px-4 py-3">Activated</th>
-                <th className="px-4 py-3">Completed</th>
-                <th className="px-4 py-3">Trimmed mean RT</th>
-                <th className="px-4 py-3">Accuracy</th>
+                <SortableTh field="participant_code" {...thProps}>Participant</SortableTh>
+                <SortableTh field="order_index" {...thProps}>#</SortableTh>
+                <SortableTh field="display_label" {...thProps}>Label</SortableTh>
+                <SortableTh field="session_type" {...thProps}>Type</SortableTh>
+                <SortableTh field="code" {...thProps}>Session code</SortableTh>
+                <SortableTh field="task_type" {...thProps}>Task</SortableTh>
+                <SortableTh field="status" {...thProps}>Status</SortableTh>
+                <SortableTh field="attempt" {...thProps}>Attempt</SortableTh>
+                <SortableTh field="activated_at" {...thProps}>Activated</SortableTh>
+                <SortableTh field="completed_at" {...thProps}>Completed</SortableTh>
+                <SortableTh field="trimmed_mean_rt_ms" {...thProps}>Trimmed mean RT</SortableTh>
+                <SortableTh field="accuracy_pct" {...thProps}>Accuracy</SortableTh>
                 <th className="px-4 py-3" />
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-200">
-              {sessions.map((s) => (
-                <SessionRow key={s.id} session={s} onChanged={reload} />
-              ))}
-            </tbody>
+            {groupMode === "none" ? (
+              <tbody className="divide-y divide-gray-200">
+                {sorted.map((s) => (
+                  <SessionRow key={s.id} session={s} onChanged={reload} />
+                ))}
+              </tbody>
+            ) : (
+              groups.map((g) => (
+                <tbody key={g.key} className="divide-y divide-gray-200">
+                  <tr
+                    className="cursor-pointer bg-gray-50 hover:bg-gray-100"
+                    onClick={() => toggleSection(g.key)}
+                  >
+                    <td colSpan={13} className="px-4 py-2 text-sm font-semibold text-gray-700">
+                      <span className="mr-1 inline-block w-4 text-center text-gray-400">
+                        {collapsed.has(g.key) ? "▶" : "▼"}
+                      </span>
+                      {g.label}
+                      {groupMode === "participant"
+                        ? ` — ${g.total} session${g.total === 1 ? "" : "s"}, ${g.completed} completed`
+                        : ` — ${g.members} member${g.members === 1 ? "" : "s"}, ${g.completed} completed`}
+                    </td>
+                  </tr>
+                  {!collapsed.has(g.key) &&
+                    g.sessions.map((s) => (
+                      <SessionRow key={s.id} session={s} onChanged={reload} />
+                    ))}
+                </tbody>
+              ))
+            )}
           </table>
         </div>
       )}
-
     </div>
   );
 }

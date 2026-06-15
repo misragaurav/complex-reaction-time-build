@@ -13,7 +13,9 @@ from app.models import Group, Participant, ParticipantGroupAssignment, Study
 from app.models import Session as SessionModel
 from app.schemas.groups import (
     AssignedItem,
+    BlockedItem,
     ConflictItem,
+    GroupActivateRequest,
     GroupActivateResponse,
     GroupActivatedItem,
     GroupAssignRequest,
@@ -27,6 +29,7 @@ from app.schemas.groups import (
     GroupMember,
     GroupOut,
     GroupUpdate,
+    ReassignedItem,
 )
 
 router = APIRouter(tags=["groups"])
@@ -233,7 +236,8 @@ def assign_participants(
     group = _get_group(db, group_id)
 
     assigned: list[AssignedItem] = []
-    conflicts: list[ConflictItem] = []
+    reassigned: list[ReassignedItem] = []
+    blocked: list[BlockedItem] = []
     seen: set[uuid.UUID] = set()
     for pid in payload.participant_ids:
         if pid in seen:
@@ -247,31 +251,52 @@ def assign_participants(
             )
         existing = participant.group_assignment
         if existing is not None:
-            current = db.get(Group, existing.group_id)
-            conflicts.append(
-                ConflictItem(
-                    participant_id=pid,
-                    code=participant.code,
-                    current_group_name=current.name if current else "",
+            current_group = db.get(Group, existing.group_id)
+            current_group_name = current_group.name if current_group else ""
+            started_count = db.execute(
+                select(func.count()).select_from(SessionModel).where(
+                    SessionModel.participant_id == pid,
+                    SessionModel.status.in_(["in_progress", "completed", "abandoned"]),
                 )
-            )
+            ).scalar_one()
+            if started_count > 0:
+                blocked.append(
+                    BlockedItem(
+                        participant_id=pid,
+                        code=participant.code,
+                        current_group_name=current_group_name,
+                        reason="sessions_started",
+                    )
+                )
+            else:
+                db.delete(existing)
+                db.flush()
+                db.add(ParticipantGroupAssignment(participant_id=pid, group_id=group_id))
+                reassigned.append(
+                    ReassignedItem(
+                        participant_id=pid,
+                        code=participant.code,
+                        previous_group_name=current_group_name,
+                        new_group_name=group.name,
+                    )
+                )
         else:
             db.add(ParticipantGroupAssignment(participant_id=pid, group_id=group_id))
             assigned.append(AssignedItem(participant_id=pid, code=participant.code))
 
-    if not assigned and conflicts:
-        # MFR-24: every requested participant was already assigned.
-        first = conflicts[0]
+    if not assigned and not reassigned:
+        first = blocked[0] if blocked else None
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                f"Participant {first.code} is already assigned to group "
-                f"{first.current_group_name}. Assignments cannot be changed."
+                f"Participant {first.code} cannot be reassigned because sessions have already started."
+                if first
+                else "No participants could be assigned."
             ),
         )
 
     db.commit()
-    return GroupAssignResponse(assigned=assigned, conflicts=conflicts)
+    return GroupAssignResponse(assigned=assigned, conflicts=[], reassigned=reassigned, blocked=blocked)
 
 
 def _group_member_ids(db: DbDep, group_id: uuid.UUID) -> list[uuid.UUID]:
@@ -286,7 +311,9 @@ def _group_member_ids(db: DbDep, group_id: uuid.UUID) -> list[uuid.UUID]:
 
 
 @router.post("/groups/{group_id}/activate", response_model=GroupActivateResponse)
-def activate_group(group_id: uuid.UUID, user: CurrentUserDep, db: DbDep) -> GroupActivateResponse:
+def activate_group(
+    group_id: uuid.UUID, payload: GroupActivateRequest, user: CurrentUserDep, db: DbDep
+) -> GroupActivateResponse:
     """MOD-5 / MFR-31: activate the current-session slot for all group members."""
     group = _get_group(db, group_id)
     if group.current_intervention_session is None:
@@ -306,6 +333,7 @@ def activate_group(group_id: uuid.UUID, user: CurrentUserDep, db: DbDep) -> Grou
             select(SessionModel).where(
                 SessionModel.participant_id == pid,
                 SessionModel.intervention_session_number == group.current_intervention_session,
+                SessionModel.session_type == payload.session_type,
                 SessionModel.status.in_(["created", "expired"]),
             )
         ).scalars().all()
@@ -324,7 +352,7 @@ def activate_group(group_id: uuid.UUID, user: CurrentUserDep, db: DbDep) -> Grou
                 )
             )
     db.commit()
-    return GroupActivateResponse(activated=activated)
+    return GroupActivateResponse(activated=activated, session_type=payload.session_type)
 
 
 @router.post("/groups/{group_id}/deactivate", response_model=GroupDeactivateResponse)

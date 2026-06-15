@@ -143,13 +143,15 @@ function ProtocolConfigForm({
 }): JSX.Element {
   const [num, setNum] = useState(study.num_intervention_sessions);
   const [perWeek, setPerWeek] = useState(study.sessions_per_week);
-  const [ttOnboarding, setTtOnboarding] = useState<TaskType>(study.task_type_onboarding);
-  const [ttPre, setTtPre] = useState<TaskType>(study.task_type_pre);
-  const [ttPost, setTtPost] = useState<TaskType>(study.task_type_post);
+  const [taskType, setTaskType] = useState<TaskType>(study.task_type_pre);
+  const [warnDismissed, setWarnDismissed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const locked = study.protocol_locked;
+  const hasInconsistentTypes =
+    study.task_type_onboarding !== study.task_type_pre ||
+    study.task_type_pre !== study.task_type_post;
 
   const multipleOfError =
     perWeek > 0 && num % perWeek !== 0
@@ -169,9 +171,9 @@ function ProtocolConfigForm({
       const updated = await studiesApi.update(study.id, {
         num_intervention_sessions: num,
         sessions_per_week: perWeek,
-        task_type_onboarding: ttOnboarding,
-        task_type_pre: ttPre,
-        task_type_post: ttPost,
+        task_type_onboarding: taskType,
+        task_type_pre: taskType,
+        task_type_post: taskType,
       });
       onChange(updated);
       setSuccess("Saved.");
@@ -182,21 +184,6 @@ function ProtocolConfigForm({
     }
   }
 
-  const selectFor = (value: TaskType, onSet: (t: TaskType) => void): JSX.Element => (
-    <select
-      className={`${selectClass}${locked ? " bg-gray-100 text-gray-500" : ""}`}
-      value={value}
-      disabled={locked}
-      onChange={(e) => onSet(e.target.value as TaskType)}
-    >
-      {(Object.keys(TASK_TYPE_LABELS) as TaskType[]).map((t) => (
-        <option key={t} value={t}>
-          {TASK_TYPE_LABELS[t]}
-        </option>
-      ))}
-    </select>
-  );
-
   return (
     <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4 rounded-lg border border-gray-200 bg-white p-4">
       <h2 className="text-base font-semibold text-gray-900">Protocol</h2>
@@ -204,6 +191,21 @@ function ProtocolConfigForm({
         <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
           Protocol sessions have been generated for this study, so the protocol configuration is now
           read-only.
+        </div>
+      )}
+      {hasInconsistentTypes && !locked && !warnDismissed && (
+        <div className="flex items-start justify-between gap-2 rounded border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">
+          <span>
+            This study's task types were previously configured differently across session phases.
+            The value shown below will be applied to all phases when you save.
+          </span>
+          <button
+            type="button"
+            className="shrink-0 text-blue-600 hover:text-blue-800"
+            onClick={() => setWarnDismissed(true)}
+          >
+            ×
+          </button>
         </div>
       )}
       <ErrorBanner message={error} />
@@ -231,9 +233,20 @@ function ProtocolConfigForm({
             onChange={(e) => setPerWeek(e.target.valueAsNumber || 0)}
           />
         </Field>
-        <Field label="Onboarding task type">{selectFor(ttOnboarding, setTtOnboarding)}</Field>
-        <Field label="Pre task type">{selectFor(ttPre, setTtPre)}</Field>
-        <Field label="Post task type">{selectFor(ttPost, setTtPost)}</Field>
+        <Field label="Task type">
+          <select
+            className={`${selectClass}${locked ? " bg-gray-100 text-gray-500" : ""}`}
+            value={taskType}
+            disabled={locked}
+            onChange={(e) => setTaskType(e.target.value as TaskType)}
+          >
+            {(Object.keys(TASK_TYPE_LABELS) as TaskType[]).map((t) => (
+              <option key={t} value={t}>
+                {TASK_TYPE_LABELS[t]}
+              </option>
+            ))}
+          </select>
+        </Field>
       </div>
       {multipleOfError && <p className="text-sm text-red-600">{multipleOfError}</p>}
       {!locked && (

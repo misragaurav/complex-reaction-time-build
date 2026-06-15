@@ -336,12 +336,32 @@ export interface GroupAssignRequest {
   participant_ids: string[];
 }
 
+export interface ReassignedItem {
+  participant_id: string;
+  code: string;
+  previous_group_name: string;
+  new_group_name: string;
+}
+
+export interface BlockedItem {
+  participant_id: string;
+  code: string;
+  current_group_name: string;
+  reason: string;
+}
+
 export interface GroupAssignResponse {
   assigned: { participant_id: string; code: string }[];
   conflicts: { participant_id: string; code: string; current_group_name: string }[];
+  reassigned: ReassignedItem[];
+  blocked: BlockedItem[];
 }
 
 // MOD-5: group activation/deactivation types (MFR-31/32).
+export interface GroupActivateRequest {
+  session_type?: "pre" | "post";
+}
+
 export interface GroupActivatedItem {
   participant_id: string;
   code: string;
@@ -353,6 +373,7 @@ export interface GroupActivatedItem {
 
 export interface GroupActivateResponse {
   activated: GroupActivatedItem[];
+  session_type: string;
 }
 
 export interface BlockingItem {

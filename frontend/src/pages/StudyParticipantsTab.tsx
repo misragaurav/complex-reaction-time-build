@@ -238,9 +238,11 @@ function GenerateProtocolForm({
 }): JSX.Element {
   const [num, setNum] = useState(study.num_intervention_sessions);
   const [weekStart, setWeekStart] = useState(1);
-  const [ttOnboarding, setTtOnboarding] = useState<TaskType>(study.task_type_onboarding);
-  const [ttPre, setTtPre] = useState<TaskType>(study.task_type_pre);
-  const [ttPost, setTtPost] = useState<TaskType>(study.task_type_post);
+  const [taskType, setTaskType] = useState<TaskType>(study.task_type_pre);
+  const [warnDismissed, setWarnDismissed] = useState(false);
+  const hasInconsistentTypes =
+    study.task_type_onboarding !== study.task_type_pre ||
+    study.task_type_pre !== study.task_type_post;
   // Default selection: participants who do not yet have any sessions.
   const [selected, setSelected] = useState<Set<string>>(
     () => new Set(participants.filter((p) => p.sessions_assigned === 0).map((p) => p.id)),
@@ -281,9 +283,9 @@ function GenerateProtocolForm({
         participant_ids: [...selected],
         num_intervention_sessions: num,
         week_start: weekStart,
-        task_type_onboarding: ttOnboarding,
-        task_type_pre: ttPre,
-        task_type_post: ttPost,
+        task_type_onboarding: taskType,
+        task_type_pre: taskType,
+        task_type_post: taskType,
       });
       const createdCount = res.created.length;
       const skippedCount = res.skipped.length;
@@ -299,16 +301,6 @@ function GenerateProtocolForm({
     }
   }
 
-  const selectFor = (value: TaskType, onSet: (t: TaskType) => void): JSX.Element => (
-    <select className={selectClass} value={value} onChange={(e) => onSet(e.target.value as TaskType)}>
-      {(Object.keys(TASK_TYPE_LABELS) as TaskType[]).map((t) => (
-        <option key={t} value={t}>
-          {TASK_TYPE_LABELS[t]}
-        </option>
-      ))}
-    </select>
-  );
-
   return (
     <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4 rounded-lg border border-gray-200 bg-white p-4">
       <h2 className="text-base font-semibold text-gray-900">Generate protocol sessions</h2>
@@ -316,6 +308,21 @@ function GenerateProtocolForm({
         Creates the onboarding session plus a pre/post pair per intervention session for each selected
         participant. Participants who already have sessions are skipped.
       </p>
+      {hasInconsistentTypes && !warnDismissed && (
+        <div className="flex items-start justify-between gap-2 rounded border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">
+          <span>
+            This study's task types were previously configured differently across session phases.
+            The value shown below will be applied to all phases when generating.
+          </span>
+          <button
+            type="button"
+            className="shrink-0 text-blue-600 hover:text-blue-800"
+            onClick={() => setWarnDismissed(true)}
+          >
+            ×
+          </button>
+        </div>
+      )}
       <ErrorBanner message={error} />
       <SuccessBanner message={success} />
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -339,9 +346,19 @@ function GenerateProtocolForm({
             onChange={(e) => setWeekStart(e.target.valueAsNumber || 0)}
           />
         </Field>
-        <Field label="Onboarding task type">{selectFor(ttOnboarding, setTtOnboarding)}</Field>
-        <Field label="Pre task type">{selectFor(ttPre, setTtPre)}</Field>
-        <Field label="Post task type">{selectFor(ttPost, setTtPost)}</Field>
+        <Field label="Task type">
+          <select
+            className={selectClass}
+            value={taskType}
+            onChange={(e) => setTaskType(e.target.value as TaskType)}
+          >
+            {(Object.keys(TASK_TYPE_LABELS) as TaskType[]).map((t) => (
+              <option key={t} value={t}>
+                {TASK_TYPE_LABELS[t]}
+              </option>
+            ))}
+          </select>
+        </Field>
       </div>
       {multipleOfError && <p className="text-sm text-red-600">{multipleOfError}</p>}
       <Field label="Participants">
@@ -424,8 +441,11 @@ export default function StudyParticipantsTab({ study }: { study: StudyOut }): JS
       const res = await groupsApi.assign(assignGroupId, { participant_ids: [...selected] });
       const parts: string[] = [];
       if (res.assigned.length) parts.push(`assigned ${res.assigned.length}`);
-      if (res.conflicts.length)
-        parts.push(`${res.conflicts.length} already in a group (unchanged)`);
+      if (res.reassigned.length) parts.push(`reassigned ${res.reassigned.length}`);
+      if (res.blocked.length)
+        parts.push(
+          `${res.blocked.length} participant${res.blocked.length === 1 ? "" : "s"} blocked (sessions already started)`,
+        );
       setAssignSuccess(parts.join("; ") || "No changes.");
       setSelected(new Set());
       refresh();

@@ -106,13 +106,16 @@ function GroupDetailPanel({
   }
 
   // MOD-5: group-level session open/close (MFR-31/32).
-  async function openSession(): Promise<void> {
+  async function openSession(sessionType: "pre" | "post"): Promise<void> {
     setError(null);
     setSuccess(null);
     setBusy(true);
     try {
-      const res = await groupsApi.activate(groupId);
-      setSuccess(`Activated ${res.activated.length} session(s) for IS ${detail?.current_intervention_session ?? "?"}.`);
+      const res = await groupsApi.activate(groupId, sessionType);
+      const cis = detail?.current_intervention_session ?? "?";
+      setSuccess(
+        `Activated ${res.activated.length} ${sessionType}-session(s) for IS ${cis}.`,
+      );
       load();
       onChanged();
     } catch (err) {
@@ -189,8 +192,11 @@ function GroupDetailPanel({
       {/* MOD-5 / MFR-31/32: open/close current session slot for all members. */}
       {cis != null && (
         <div className="flex flex-wrap gap-2">
-          <Button variant="secondary" disabled={busy} onClick={() => void openSession()}>
-            Open session (IS {cis})
+          <Button variant="secondary" disabled={busy} onClick={() => void openSession("pre")}>
+            Open pre (IS {cis})
+          </Button>
+          <Button variant="secondary" disabled={busy} onClick={() => void openSession("post")}>
+            Open post (IS {cis})
           </Button>
           <Button variant="secondary" disabled={busy} onClick={() => void closeSession(false)}>
             Close session
