@@ -14,6 +14,7 @@ from app.models import Session as SessionModel
 from app.schemas.groups import (
     AssignedItem,
     BlockedItem,
+    BlockingItem,
     ConflictItem,
     GroupActivateRequest,
     GroupActivateResponse,
@@ -314,29 +315,80 @@ def _group_member_ids(db: DbDep, group_id: uuid.UUID) -> list[uuid.UUID]:
 def activate_group(
     group_id: uuid.UUID, payload: GroupActivateRequest, user: CurrentUserDep, db: DbDep
 ) -> GroupActivateResponse:
-    """MOD-5 / MFR-31: activate the current-session slot for all group members."""
+    """MOD-5/MOD-8: activate sessions for all group members by stage (MFR-110..115)."""
     group = _get_group(db, group_id)
-    if group.current_intervention_session is None:
+
+    # MFR-111: pre/post require IS; onboarding does not.
+    if payload.session_type in ("pre", "post") and group.current_intervention_session is None:
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Group has no current_intervention_session set",
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="current_intervention_session must be set to activate pre/post sessions.",
         )
 
     member_ids = _group_member_ids(db, group_id)
-    now = datetime.datetime.now(datetime.timezone.utc)
-    activated: list[GroupActivatedItem] = []
-    for pid in member_ids:
-        participant = db.get(Participant, pid)
-        if participant is None:
-            continue
-        sessions = db.execute(
+
+    # MFR-115: global one-open-session-per-participant guard.
+    if member_ids:
+        blocking_sessions = db.execute(
             select(SessionModel).where(
-                SessionModel.participant_id == pid,
-                SessionModel.intervention_session_number == group.current_intervention_session,
-                SessionModel.session_type == payload.session_type,
-                SessionModel.status.in_(["created", "expired"]),
+                SessionModel.participant_id.in_(member_ids),
+                SessionModel.status.in_(["activated", "in_progress"]),
             )
         ).scalars().all()
+        if blocking_sessions:
+            blocking: list[BlockingItem] = []
+            participant_cache: dict[uuid.UUID, Participant] = {}
+            for s in blocking_sessions:
+                p = participant_cache.get(s.participant_id) or db.get(Participant, s.participant_id)
+                if p:
+                    participant_cache[s.participant_id] = p
+                blocking.append(
+                    BlockingItem(
+                        participant_id=s.participant_id,
+                        code=p.code if p else "",
+                        session_id=s.id,
+                        status=s.status,
+                        session_type=s.session_type,
+                        display_label=s.display_label,
+                    )
+                )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "message": "One or more participants already have an open session.",
+                    "blocking": [b.model_dump(mode="json") for b in blocking],
+                },
+            )
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    activated: list[GroupActivatedItem] = []
+    participant_cache2: dict[uuid.UUID, Participant] = {}
+    for pid in member_ids:
+        participant = participant_cache2.get(pid) or db.get(Participant, pid)
+        if participant is None:
+            continue
+        participant_cache2[pid] = participant
+
+        if payload.session_type == "onboarding":
+            # MFR-112: match onboarding sessions (IS IS NULL, no IS required).
+            sessions = db.execute(
+                select(SessionModel).where(
+                    SessionModel.participant_id == pid,
+                    SessionModel.session_type == "onboarding",
+                    SessionModel.intervention_session_number.is_(None),
+                    SessionModel.status.in_(["created", "expired"]),
+                )
+            ).scalars().all()
+        else:
+            sessions = db.execute(
+                select(SessionModel).where(
+                    SessionModel.participant_id == pid,
+                    SessionModel.intervention_session_number == group.current_intervention_session,
+                    SessionModel.session_type == payload.session_type,
+                    SessionModel.status.in_(["created", "expired"]),
+                )
+            ).scalars().all()
+
         for s in sessions:
             s.status = "activated"
             s.activated_at = now
@@ -359,28 +411,47 @@ def activate_group(
 def deactivate_group(
     group_id: uuid.UUID, payload: GroupDeactivateRequest, user: CurrentUserDep, db: DbDep
 ) -> GroupDeactivateResponse:
-    """MOD-5 / MFR-32: expire activated sessions for all group members at current slot."""
+    """MOD-5/MOD-8: expire activated sessions for all group members by stage (MFR-110..114)."""
     group = _get_group(db, group_id)
-    if group.current_intervention_session is None:
+
+    # MFR-111: pre/post require IS; onboarding does not.
+    if payload.session_type in ("pre", "post") and group.current_intervention_session is None:
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Group has no current_intervention_session set",
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="current_intervention_session must be set to deactivate pre/post sessions.",
         )
 
     member_ids = _group_member_ids(db, group_id)
-    sessions = db.execute(
-        select(SessionModel).where(
-            SessionModel.participant_id.in_(member_ids),
-            SessionModel.intervention_session_number == group.current_intervention_session,
-            SessionModel.status.in_(["activated", "in_progress"]),
-        )
-    ).scalars().all()
+
+    if payload.session_type == "onboarding":
+        # MFR-112: match onboarding sessions (IS IS NULL).
+        sessions = db.execute(
+            select(SessionModel).where(
+                SessionModel.participant_id.in_(member_ids),
+                SessionModel.session_type == "onboarding",
+                SessionModel.intervention_session_number.is_(None),
+                SessionModel.status.in_(["activated", "in_progress"]),
+            )
+        ).scalars().all()
+    else:
+        sessions = db.execute(
+            select(SessionModel).where(
+                SessionModel.participant_id.in_(member_ids),
+                SessionModel.intervention_session_number == group.current_intervention_session,
+                SessionModel.session_type == payload.session_type,
+                SessionModel.status.in_(["activated", "in_progress"]),
+            )
+        ).scalars().all()
 
     in_progress = [s for s in sessions if s.status == "in_progress"]
+    # MFR-114: require force=true when any matched session is in_progress.
     if in_progress and not payload.force:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"{len(in_progress)} session(s) are in_progress; use force=true to expire only activated ones",
+            detail={
+                "message": f"{len(in_progress)} session(s) are in_progress; use force=true to expire only activated ones",
+                "in_progress_count": len(in_progress),
+            },
         )
 
     now = datetime.datetime.now(datetime.timezone.utc)

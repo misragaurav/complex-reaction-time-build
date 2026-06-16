@@ -19,7 +19,7 @@ const STATUS_LABELS: Record<SessionStatus, string> = {
   in_progress: "In progress",
   completed: "Completed",
   abandoned: "Abandoned",
-  expired: "Missed",
+  expired: "Deactivated",
   cancelled: "Cancelled",
 };
 

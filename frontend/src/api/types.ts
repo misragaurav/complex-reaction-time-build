@@ -338,7 +338,8 @@ export interface GroupAssignResponse {
 
 // MOD-5: group activation/deactivation types (MFR-31/32).
 export interface GroupActivateRequest {
-  session_type?: "pre" | "post";
+  // MOD-8: extended to include "onboarding" (MFR-110).
+  session_type?: "onboarding" | "pre" | "post";
 }
 
 export interface GroupActivatedItem {
@@ -360,10 +361,13 @@ export interface BlockingItem {
   code: string;
   session_id: string;
   status: string;
+  session_type: string;
   display_label: string;
 }
 
 export interface GroupDeactivateRequest {
+  // MOD-8: session_type mirrors GroupActivateRequest (MFR-110).
+  session_type?: "onboarding" | "pre" | "post";
   force?: boolean;
 }
 

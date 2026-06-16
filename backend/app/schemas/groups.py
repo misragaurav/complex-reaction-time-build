@@ -94,11 +94,12 @@ class GroupAssignResponse(BaseModel):
 
 
 # MOD-5: group activation/deactivation schemas (MFR-31/32).
+# MOD-8: session_type extended to include "onboarding" (MFR-110).
 
 class GroupActivateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    session_type: Literal["pre", "post"] = "pre"
+    session_type: Literal["onboarding", "pre", "post"] = "pre"
 
 
 class GroupActivatedItem(BaseModel):
@@ -120,12 +121,15 @@ class BlockingItem(BaseModel):
     code: str
     session_id: uuid.UUID
     status: str
+    session_type: str
     display_label: str
 
 
 class GroupDeactivateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    # MOD-8: session_type mirrors GroupActivateRequest (MFR-110).
+    session_type: Literal["onboarding", "pre", "post"] = "pre"
     force: bool = False
 
 

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { errorMessage } from "../api/client";
+import { ApiError, errorMessage } from "../api/client";
 import { groupsApi } from "../api/groups";
-import type { GroupDeactivateResponse, GroupDetailOut, GroupOut, StudyOut } from "../api/types";
+import type { GroupDetailOut, GroupOut, StudyOut } from "../api/types";
 import { Button, ErrorBanner, Field, inputClass, SuccessBanner } from "../components/forms";
 
 const SIZE_WARNING = "Groups are recommended to have 4–6 participants.";
@@ -9,6 +9,9 @@ const SIZE_WARNING = "Groups are recommended to have 4–6 participants.";
 function sizeWarn(count: number): boolean {
   return count < 4 || count > 6;
 }
+
+const FORCE_DEACTIVATE_HELPER =
+  "Deactivate closes the slot for everyone who hasn't started; it is blocked if any member is mid-session (it won't interrupt them). Force deactivate closes the slot now even if some members are mid-session — those in-progress runs finish, but no one else can start.";
 
 function CreateGroupForm({
   studyId,
@@ -63,6 +66,50 @@ function CreateGroupForm({
   );
 }
 
+type SessionStageType = "onboarding" | "pre" | "post";
+
+interface StageRowProps {
+  label: string;
+  sessionType: SessionStageType;
+  disabled: boolean;
+  hint?: string;
+  busy: boolean;
+  onActivate: (sessionType: SessionStageType) => void;
+  onDeactivate: (sessionType: SessionStageType, force: boolean) => void;
+}
+
+function StageRow({ label, sessionType, disabled, hint, busy, onActivate, onDeactivate }: StageRowProps): JSX.Element {
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded border border-gray-100 bg-gray-50 px-3 py-2">
+      <span className="w-36 shrink-0 text-sm font-medium text-gray-700">{label}</span>
+      <div className="flex flex-wrap gap-2">
+        <Button
+          variant="secondary"
+          disabled={disabled || busy}
+          onClick={() => onActivate(sessionType)}
+        >
+          Activate
+        </Button>
+        <Button
+          variant="secondary"
+          disabled={disabled || busy}
+          onClick={() => onDeactivate(sessionType, false)}
+        >
+          Deactivate
+        </Button>
+        <Button
+          variant="secondary"
+          disabled={disabled || busy}
+          onClick={() => onDeactivate(sessionType, true)}
+        >
+          Force deactivate
+        </Button>
+      </div>
+      {disabled && hint && <p className="w-full text-xs text-amber-700">{hint}</p>}
+    </div>
+  );
+}
+
 function GroupDetailPanel({
   groupId,
   onChanged,
@@ -111,17 +158,21 @@ function GroupDetailPanel({
     }
   }
 
-  // MOD-5: group-level session open/close (MFR-31/32).
-  async function openSession(sessionType: "pre" | "post"): Promise<void> {
+  // MOD-8: stage-aware activate (MFR-110..115).
+  async function activateStage(sessionType: SessionStageType): Promise<void> {
     setError(null);
     setSuccess(null);
     setBusy(true);
     try {
       const res = await groupsApi.activate(groupId, sessionType);
-      const cis = detail?.current_intervention_session ?? "?";
-      setSuccess(
-        `Activated ${res.activated.length} ${sessionType}-session(s) for IS ${cis}.`,
-      );
+      const cis = detail?.current_intervention_session;
+      if (sessionType === "onboarding") {
+        setSuccess(`Activated ${res.activated.length} onboarding session(s).`);
+      } else if (res.activated.length === 0) {
+        setSuccess(`0 ${sessionType}-session(s) activated for IS ${cis ?? "?"} — none were in an activatable state.`);
+      } else {
+        setSuccess(`Activated ${res.activated.length} ${sessionType}-session(s) for IS ${cis ?? "?"}.`);
+      }
       load();
       onChanged();
     } catch (err) {
@@ -131,18 +182,37 @@ function GroupDetailPanel({
     }
   }
 
-  async function closeSession(force = false): Promise<void> {
+  // MOD-8: stage-aware deactivate with in-progress confirmation (MFR-114/128).
+  async function deactivateStage(sessionType: SessionStageType, force: boolean): Promise<void> {
     setError(null);
     setSuccess(null);
     setBusy(true);
     try {
-      const res: GroupDeactivateResponse = await groupsApi.deactivate(groupId, force);
-      const msg = `Expired ${res.expired.length} session(s).${res.in_progress_count > 0 ? ` ${res.in_progress_count} in-progress session(s) were left running.` : ""}`;
-      setSuccess(msg);
+      const res = await groupsApi.deactivate(groupId, sessionType, force);
+      const cis = detail?.current_intervention_session;
+      if (sessionType === "onboarding") {
+        setSuccess(`Deactivated ${res.expired.length} onboarding session(s).`);
+      } else {
+        setSuccess(`Deactivated ${res.expired.length} ${sessionType}-session(s) for IS ${cis ?? "?"}.`);
+      }
       load();
       onChanged();
     } catch (err) {
-      setError(errorMessage(err));
+      // MFR-128: soft deactivate returned 409 due to in-progress sessions → confirm dialog.
+      if (!force && err instanceof ApiError && err.status === 409) {
+        const detail409 = err.detail as { in_progress_count?: number } | null;
+        const count = detail409?.in_progress_count ?? 1;
+        const confirmed = window.confirm(
+          `${count} participant(s) are mid-session. Force deactivate will close the slot for everyone else; in-progress runs will finish but no one new can start. Continue?`,
+        );
+        if (confirmed) {
+          setBusy(false);
+          await deactivateStage(sessionType, true);
+          return;
+        }
+      } else {
+        setError(errorMessage(err));
+      }
     } finally {
       setBusy(false);
     }
@@ -153,6 +223,7 @@ function GroupDetailPanel({
   }
 
   const cis = detail.current_intervention_session;
+  const noIs = cis == null;
 
   return (
     <div className="space-y-4 rounded-lg border border-gray-200 bg-white p-4">
@@ -167,51 +238,70 @@ function GroupDetailPanel({
       <ErrorBanner message={error} />
       <SuccessBanner message={success} />
 
-      {/* MOD-4 / MFR-23: intervention-stage counter (display-only). */}
-      <div className="flex flex-wrap items-end gap-3">
-        <Field label="Current intervention session" hint="Display-only counter (1–52).">
-          <input
-            type="number"
-            className={`${inputClass} w-32`}
-            min={1}
-            max={52}
-            value={cisDraft}
-            onChange={(e) => setCisDraft(e.target.value)}
-          />
-        </Field>
-        <Button
-          variant="secondary"
-          disabled={busy}
-          onClick={() => void setCis(cisDraft.trim() === "" ? null : Number(cisDraft))}
-        >
-          Save
-        </Button>
-        <Button
-          variant="secondary"
-          disabled={busy || (cis ?? 0) >= 52}
-          onClick={() => void setCis((cis ?? 0) + 1)}
-        >
-          +1
-        </Button>
-      </div>
-
-      {/* MOD-5 / MFR-31/32: open/close current session slot for all members. */}
-      {cis != null && (
-        <div className="flex flex-wrap gap-2">
-          <Button variant="secondary" disabled={busy} onClick={() => void openSession("pre")}>
-            Open pre (IS {cis})
+      {/* MFR-23: IS editor with caption (MFR-119). */}
+      <div className="space-y-1">
+        <div className="flex flex-wrap items-end gap-3">
+          <Field label="Current intervention session (IS)" hint="IS = Intervention Session. Display-only counter (1–52).">
+            <input
+              type="number"
+              className={`${inputClass} w-32`}
+              min={1}
+              max={52}
+              value={cisDraft}
+              onChange={(e) => setCisDraft(e.target.value)}
+            />
+          </Field>
+          <Button
+            variant="secondary"
+            disabled={busy}
+            onClick={() => void setCis(cisDraft.trim() === "" ? null : Number(cisDraft))}
+          >
+            Save
           </Button>
-          <Button variant="secondary" disabled={busy} onClick={() => void openSession("post")}>
-            Open post (IS {cis})
-          </Button>
-          <Button variant="secondary" disabled={busy} onClick={() => void closeSession(false)}>
-            Close session
-          </Button>
-          <Button variant="secondary" disabled={busy} onClick={() => void closeSession(true)}>
-            Force close
+          <Button
+            variant="secondary"
+            disabled={busy || (cis ?? 0) >= 52}
+            onClick={() => void setCis((cis ?? 0) + 1)}
+          >
+            +1
           </Button>
         </div>
-      )}
+      </div>
+
+      {/* MFR-124: unified stage panel (Onboarding / Pre / Post). */}
+      <div className="space-y-2">
+        <h4 className="text-sm font-medium text-gray-700">Session activation</h4>
+        {/* MFR-120: soft-vs-force helper text (verbatim). */}
+        <p className="text-xs text-gray-500">{FORCE_DEACTIVATE_HELPER}</p>
+        <div className="space-y-2">
+          <StageRow
+            label="Onboarding"
+            sessionType="onboarding"
+            disabled={false}
+            busy={busy}
+            onActivate={(st) => void activateStage(st)}
+            onDeactivate={(st, f) => void deactivateStage(st, f)}
+          />
+          <StageRow
+            label={`Pre${cis != null ? ` (IS ${cis})` : ""}`}
+            sessionType="pre"
+            disabled={noIs}
+            hint="Set an Intervention Session number to activate pre/post sessions."
+            busy={busy}
+            onActivate={(st) => void activateStage(st)}
+            onDeactivate={(st, f) => void deactivateStage(st, f)}
+          />
+          <StageRow
+            label={`Post${cis != null ? ` (IS ${cis})` : ""}`}
+            sessionType="post"
+            disabled={noIs}
+            hint="Set an Intervention Session number to activate pre/post sessions."
+            busy={busy}
+            onActivate={(st) => void activateStage(st)}
+            onDeactivate={(st, f) => void deactivateStage(st, f)}
+          />
+        </div>
+      </div>
 
       {/* MFR-25: per-group completion counts. */}
       <div className="grid grid-cols-2 gap-2 text-sm text-gray-700 sm:grid-cols-3">
@@ -241,6 +331,7 @@ function GroupDetailPanel({
         )}
       </div>
 
+      {/* MFR-27: delete-group (only when empty). */}
       {detail.member_count === 0 && (
         <Button
           variant="danger"
@@ -280,8 +371,7 @@ export default function StudyGroupsTab({ study }: { study: StudyOut }): JSX.Elem
     reload();
   }, [reload]);
 
-  // MOD-11: refetch on window focus so that a reassignment done in another tab
-  // is visible immediately in both the list and the open detail panel.
+  // MOD-11: refetch on window focus so that reassignment changes are visible immediately.
   useEffect(() => {
     function handleFocus(): void {
       reload();
@@ -291,55 +381,64 @@ export default function StudyGroupsTab({ study }: { study: StudyOut }): JSX.Elem
   }, [reload]);
 
   return (
-    <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-      <div className="space-y-4">
-        <ErrorBanner message={error} />
-        {!groups ? (
-          <p className="text-sm text-gray-500">Loading…</p>
-        ) : groups.length === 0 ? (
-          <p className="text-sm text-gray-500">No groups yet.</p>
-        ) : (
-          <ul className="divide-y divide-gray-200 rounded-lg border border-gray-200 bg-white">
-            {groups.map((g) => (
-              <li key={g.id}>
-                <button
-                  type="button"
-                  onClick={() => setSelected(g.id)}
-                  className={`flex w-full items-center justify-between gap-2 px-4 py-3 text-left text-sm hover:bg-gray-50 ${
-                    selected === g.id ? "bg-gray-50" : ""
-                  }`}
-                >
-                  <span className="font-medium text-gray-900">{g.name}</span>
-                  <span className="flex items-center gap-2 text-gray-500">
-                    {sizeWarn(g.member_count) && <span title={SIZE_WARNING}>⚠️</span>}
-                    {g.member_count} members
-                    {g.current_intervention_session != null && (
-                      <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs text-blue-700">
-                        IS {g.current_intervention_session}
-                      </span>
-                    )}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
+    <div className="space-y-6">
+      {/* MFR-121: Create-group left, groups list right at md+ width. */}
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <CreateGroupForm studyId={study.id} onCreated={reload} />
+
+        <div className="space-y-3">
+          <h2 className="text-base font-semibold text-gray-900">Groups</h2>
+          <ErrorBanner message={error} />
+          {!groups ? (
+            <p className="text-sm text-gray-500">Loading…</p>
+          ) : groups.length === 0 ? (
+            <p className="text-sm text-gray-500">No groups yet.</p>
+          ) : (
+            <ul className="divide-y divide-gray-200 rounded-lg border border-gray-200 bg-white">
+              {groups.map((g) => (
+                <li key={g.id}>
+                  {/* MFR-123: selected row uses bg-blue-50 + ring-2 ring-blue-500 + font-semibold. */}
+                  <button
+                    type="button"
+                    onClick={() => setSelected(g.id)}
+                    className={`flex w-full items-center justify-between gap-2 px-4 py-3 text-left text-sm hover:bg-blue-50 ${
+                      selected === g.id
+                        ? "bg-blue-50 font-semibold ring-2 ring-inset ring-blue-500"
+                        : ""
+                    }`}
+                  >
+                    <span className="text-gray-900">{g.name}</span>
+                    <span className="flex items-center gap-2 text-gray-500">
+                      {sizeWarn(g.member_count) && <span title={SIZE_WARNING}>⚠️</span>}
+                      {g.member_count} members
+                      {g.current_intervention_session != null && (
+                        <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs text-blue-700">
+                          IS {g.current_intervention_session}
+                        </span>
+                      )}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </div>
 
-      <div>
-        {selected ? (
-          <GroupDetailPanel
-            key={selected}
-            groupId={selected}
-            onChanged={() => {
-              reload();
-            }}
-          />
-        ) : (
-          <p className="text-sm text-gray-500">Select a group to see members and details.</p>
-        )}
-      </div>
+      {/* MFR-122: full-width detail panel below, only when a group is selected. */}
+      {selected && (
+        <GroupDetailPanel
+          key={selected}
+          groupId={selected}
+          onChanged={() => {
+            reload();
+            // If the selected group was deleted, deselect.
+            if (groups && !groups.find((g) => g.id === selected)) {
+              setSelected(null);
+            }
+          }}
+        />
+      )}
     </div>
   );
 }
