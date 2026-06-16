@@ -108,26 +108,14 @@ export interface UserOut {
 
 // ---- studies.py ---------------------------------------------------------------
 
-// MOD-3 protocol configuration (shared by create/update/out).
-export interface ProtocolConfig {
-  num_intervention_sessions: number;
-  sessions_per_week: number;
-  task_type_onboarding: TaskType;
-  task_type_pre: TaskType;
-  task_type_post: TaskType;
-}
-
 export interface StudyCreate {
   name: string;
   description?: string | null;
   task_type: TaskType;
   params?: TaskParamsInput | null;
-  // MOD-3 (optional; server-defaulted to 24 / 3 / CRT4×3).
+  // MOD-3 (optional; server-defaulted to 24 / 3).
   num_intervention_sessions?: number;
   sessions_per_week?: number;
-  task_type_onboarding?: TaskType;
-  task_type_pre?: TaskType;
-  task_type_post?: TaskType;
 }
 
 export interface StudyUpdate {
@@ -138,9 +126,6 @@ export interface StudyUpdate {
   // MOD-3 (subject to the post-generation lock).
   num_intervention_sessions?: number;
   sessions_per_week?: number;
-  task_type_onboarding?: TaskType;
-  task_type_pre?: TaskType;
-  task_type_post?: TaskType;
 }
 
 export interface StudyCounts {
@@ -159,9 +144,6 @@ export interface StudyOut {
   // MOD-3 protocol configuration.
   num_intervention_sessions: number;
   sessions_per_week: number;
-  task_type_onboarding: TaskType;
-  task_type_pre: TaskType;
-  task_type_post: TaskType;
   protocol_locked: boolean;
   created_by: string;
   is_archived: boolean;
@@ -176,9 +158,6 @@ export interface GenerateProtocolRequest {
   participant_ids?: string[];
   num_intervention_sessions?: number;
   week_start?: number;
-  task_type_onboarding?: TaskType;
-  task_type_pre?: TaskType;
-  task_type_post?: TaskType;
 }
 
 export interface ProtocolCreatedItem {
@@ -359,7 +338,8 @@ export interface GroupAssignResponse {
 
 // MOD-5: group activation/deactivation types (MFR-31/32).
 export interface GroupActivateRequest {
-  session_type?: "pre" | "post";
+  // MOD-8: extended to include "onboarding" (MFR-110).
+  session_type?: "onboarding" | "pre" | "post";
 }
 
 export interface GroupActivatedItem {
@@ -381,10 +361,13 @@ export interface BlockingItem {
   code: string;
   session_id: string;
   status: string;
+  session_type: string;
   display_label: string;
 }
 
 export interface GroupDeactivateRequest {
+  // MOD-8: session_type mirrors GroupActivateRequest (MFR-110).
+  session_type?: "onboarding" | "pre" | "post";
   force?: boolean;
 }
 
@@ -445,6 +428,9 @@ export interface SessionOut {
   expired_at: string | null; // MOD-5
   created_at: string;
   stats: SessionStatsBrief;
+  // MOD-11: group membership at query time (null when unassigned).
+  group_id: string | null;
+  group_name: string | null;
 }
 
 /** `{action: "reset" | "cancel"}` per API #17 (FR-22/23); MOD-3 adds the

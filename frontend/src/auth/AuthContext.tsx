@@ -3,10 +3,11 @@ import {
   login as loginRequest,
   logout as logoutRequest,
   participantLogin as participantLoginRequest,
+  participantRefresh as participantRefreshRequest,
   participantSetPassword as participantSetPasswordRequest,
   refresh as refreshRequest,
 } from "../api/auth";
-import { onSessionExpire, setAccessToken } from "../api/tokenStore";
+import { onSessionExpire, setAccessToken, setIdentityKind } from "../api/tokenStore";
 import type { ParticipantPublic, UserPublic } from "../api/types";
 import type { Identity, UserIdentity } from "./types";
 
@@ -56,6 +57,7 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
     let cancelled = false;
 
     onSessionExpire(() => {
+      setIdentityKind(null);
       clearStoredIdentity();
       setState({ identity: null, status: "anonymous" });
     });
@@ -64,7 +66,10 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
     if (!stored) {
       setState({ identity: null, status: "anonymous" });
     } else {
-      refreshRequest()
+      // Set the realm BEFORE calling refresh so client.ts routes 401-retries correctly.
+      setIdentityKind(stored.kind);
+      const doRefresh = stored.kind === "participant" ? participantRefreshRequest : refreshRequest;
+      doRefresh()
         .then(({ access_token }) => {
           if (cancelled) return;
           setAccessToken(access_token);
@@ -72,6 +77,7 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
         })
         .catch(() => {
           if (cancelled) return;
+          setIdentityKind(null);
           clearStoredIdentity();
           setState({ identity: null, status: "anonymous" });
         });
@@ -86,6 +92,7 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
   const loginUser = useCallback(async (email: string, password: string): Promise<UserPublic> => {
     const res = await loginRequest({ email, password });
     setAccessToken(res.access_token);
+    setIdentityKind("user");
     const identity: Identity = {
       kind: "user",
       id: res.user.id,
@@ -101,6 +108,7 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
   const loginParticipant = useCallback(async (code: string, password: string): Promise<ParticipantPublic> => {
     const res = await participantLoginRequest({ code, password });
     setAccessToken(res.access_token);
+    setIdentityKind("participant");
     const identity: Identity = { kind: "participant", ...res.participant };
     writeStoredIdentity(identity);
     setState({ identity, status: "authenticated" });
@@ -111,6 +119,7 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
     async (code: string, password: string): Promise<ParticipantPublic> => {
       const res = await participantSetPasswordRequest({ code, password });
       setAccessToken(res.access_token);
+      setIdentityKind("participant");
       const identity: Identity = { kind: "participant", ...res.participant };
       writeStoredIdentity(identity);
       setState({ identity, status: "authenticated" });
@@ -135,6 +144,7 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
       await logoutRequest();
     } finally {
       setAccessToken(null);
+      setIdentityKind(null);
       clearStoredIdentity();
       setState({ identity: null, status: "anonymous" });
     }

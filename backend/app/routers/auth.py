@@ -23,6 +23,7 @@ from app.schemas.auth import (
     UserPublic,
 )
 from app.security import (
+    PARTICIPANT_REFRESH_COOKIE_NAME,
     REFRESH_COOKIE_NAME,
     create_access_token,
     create_refresh_token,
@@ -77,7 +78,7 @@ def login(payload: LoginRequest, response: Response, db: DbDep) -> TokenResponse
     )
 
 
-# --- 2. Refresh access token --------------------------------------------------------------------
+# --- 2. Refresh access token (researcher/admin realm) -------------------------------------------
 @router.post("/refresh", response_model=AccessTokenResponse)
 def refresh(
     db: DbDep,
@@ -100,18 +101,49 @@ def refresh(
     except (KeyError, ValueError) as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from exc
 
-    if role in ("admin", "researcher"):
-        user = db.get(User, sub)
-        if user is None or not user.is_active:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account not found")
-        access_token = create_access_token(sub=str(user.id), role=user.role)  # type: ignore[arg-type]
-    elif role == "participant":
-        participant = db.get(Participant, sub)
-        if participant is None or not participant.is_active:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account not found")
-        access_token = create_access_token(sub=str(participant.id), role="participant")
-    else:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+    # Defense-in-depth: reject participant tokens on the researcher refresh endpoint.
+    if role not in ("admin", "researcher"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Wrong auth realm")
+
+    user = db.get(User, sub)
+    if user is None or not user.is_active:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account not found")
+    access_token = create_access_token(sub=str(user.id), role=user.role)  # type: ignore[arg-type]
+
+    return AccessTokenResponse(access_token=access_token)
+
+
+# --- 2a. Refresh access token (participant realm) ------------------------------------------------
+@router.post("/participant/refresh", response_model=AccessTokenResponse)
+def participant_refresh(
+    db: DbDep,
+    refresh_token: str | None = Cookie(default=None, alias=PARTICIPANT_REFRESH_COOKIE_NAME),
+) -> AccessTokenResponse:
+    if refresh_token is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    try:
+        payload = decode_token(refresh_token)
+    except jwt.PyJWTError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired refresh token"
+        ) from exc
+    if payload.get("type") != "refresh":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token type")
+
+    role = payload.get("role")
+    try:
+        sub = uuid.UUID(str(payload["sub"]))
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from exc
+
+    # Defense-in-depth: only participant tokens are valid here.
+    if role != "participant":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Wrong auth realm")
+
+    participant = db.get(Participant, sub)
+    if participant is None or not participant.is_active:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account not found")
+    access_token = create_access_token(sub=str(participant.id), role="participant")
 
     return AccessTokenResponse(access_token=access_token)
 
@@ -120,8 +152,17 @@ def refresh(
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 def logout(response: Response) -> None:
     settings = get_settings()
+    # Clear both realm cookies so a single logout button works regardless of
+    # which realm is active in this browser tab.
     response.delete_cookie(
         key=REFRESH_COOKIE_NAME,
+        path="/api/v1/auth",
+        httponly=True,
+        samesite="lax",
+        secure=settings.cookie_secure,
+    )
+    response.delete_cookie(
+        key=PARTICIPANT_REFRESH_COOKIE_NAME,
         path="/api/v1/auth",
         httponly=True,
         samesite="lax",
@@ -217,7 +258,7 @@ def _participant_token_response(
     settings = get_settings()
     response.set_cookie(
         value=refresh_token,
-        **refresh_cookie_kwargs(settings, _refresh_max_age()),
+        **refresh_cookie_kwargs(settings, _refresh_max_age(), name=PARTICIPANT_REFRESH_COOKIE_NAME),
     )
 
     return ParticipantTokenResponse(

@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, select
 
 from app.deps import CurrentParticipantDep, CurrentUserDep, DbDep
-from app.models import Participant, Study, Trial
+from app.models import Group, Participant, ParticipantGroupAssignment, Study, Trial
 from app.models import Session as SessionModel
 from app.schemas.common import merge_and_validate_params
 from app.schemas.sessions import (
@@ -70,10 +70,21 @@ def _sessions_to_out(db: DbDep, sessions: list[SessionModel]) -> list[SessionOut
     ).scalars().all()
     participants_by_id = {p.id: p for p in participants}
 
+    # MOD-11: fetch current group assignment for all participant IDs in one query.
+    group_rows = db.execute(
+        select(ParticipantGroupAssignment.participant_id, Group.id, Group.name)
+        .join(Group, ParticipantGroupAssignment.group_id == Group.id)
+        .where(ParticipantGroupAssignment.participant_id.in_(participant_ids))
+    ).all()
+    group_info: dict[uuid.UUID, tuple[uuid.UUID, str]] = {
+        row.participant_id: (row.id, row.name) for row in group_rows
+    }
+
     out: list[SessionOut] = []
     for session in sessions:
         summary = compute_session_summary(session, trials_by_session[session.id])
         participant = participants_by_id[session.participant_id]
+        g = group_info.get(session.participant_id)
         out.append(
             SessionOut(
                 id=session.id,
@@ -100,6 +111,8 @@ def _sessions_to_out(db: DbDep, sessions: list[SessionModel]) -> list[SessionOut
                 expired_at=session.expired_at,
                 created_at=session.created_at,
                 stats=session_stats_brief(summary),
+                group_id=g[0] if g else None,
+                group_name=g[1] if g else None,
             )
         )
     return out
@@ -144,12 +157,11 @@ def generate_protocol(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="num_intervention_sessions must be a multiple of sessions_per_week",
         )
-    tt_onboarding = payload.task_type_onboarding or study.task_type_onboarding
-    tt_pre = payload.task_type_pre or study.task_type_pre
-    tt_post = payload.task_type_post or study.task_type_post
 
-    # MFR-18: validate every task-type/params combo BEFORE creating any session.
-    params_by_tt = {tt: _params_for_task_type(study, tt) for tt in {tt_onboarding, tt_pre, tt_post}}
+    # MOD-7: all session stages use the single study.task_type.
+    task_type = study.task_type
+    # MFR-18: validate the task-type/params combo BEFORE creating any session.
+    params_by_tt = {task_type: _params_for_task_type(study, task_type)}
 
     # Resolve target participants: explicit list, or all who have no sessions yet.
     if payload.participant_ids is not None:
@@ -177,9 +189,7 @@ def generate_protocol(
         num_intervention_sessions=num,
         sessions_per_week=study.sessions_per_week,
         week_start=payload.week_start,
-        task_type_onboarding=tt_onboarding,
-        task_type_pre=tt_pre,
-        task_type_post=tt_post,
+        task_type=task_type,
     )
 
     created_items: list[ProtocolCreatedItem] = []

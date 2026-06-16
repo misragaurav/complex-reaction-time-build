@@ -3,6 +3,10 @@
 let accessToken: string | null = null;
 let onExpire: (() => void) | null = null;
 
+// Which auth realm is active — determines which refresh endpoint client.ts
+// uses when a 401 triggers a silent re-auth.
+let identityKind: "user" | "participant" | null = null;
+
 export function getAccessToken(): string | null {
   return accessToken;
 }
@@ -11,11 +15,20 @@ export function setAccessToken(token: string | null): void {
   accessToken = token;
 }
 
+export function getIdentityKind(): "user" | "participant" | null {
+  return identityKind;
+}
+
+export function setIdentityKind(kind: "user" | "participant" | null): void {
+  identityKind = kind;
+}
+
 export function onSessionExpire(handler: (() => void) | null): void {
   onExpire = handler;
 }
 
 export function expireSession(): void {
   accessToken = null;
+  identityKind = null;
   onExpire?.();
 }

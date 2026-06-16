@@ -69,12 +69,22 @@ def decode_token(token: str) -> dict[str, Any]:
 
 
 REFRESH_COOKIE_NAME = "refresh_token"
+PARTICIPANT_REFRESH_COOKIE_NAME = "participant_refresh_token"
 
 
-def refresh_cookie_kwargs(settings: Any, max_age_seconds: int | None) -> dict[str, Any]:
-    """Common kwargs for setting/clearing the refresh cookie (NFR-5)."""
+def refresh_cookie_kwargs(
+    settings: Any,
+    max_age_seconds: int | None,
+    *,
+    name: str = REFRESH_COOKIE_NAME,
+) -> dict[str, Any]:
+    """Common kwargs for setting/clearing a refresh cookie (NFR-5).
+
+    Pass ``name=PARTICIPANT_REFRESH_COOKIE_NAME`` for the participant realm so
+    the two realms use distinct cookie names and never overwrite each other.
+    """
     return {
-        "key": REFRESH_COOKIE_NAME,
+        "key": name,
         "httponly": True,
         "samesite": "lax",
         "secure": settings.cookie_secure,

@@ -110,3 +110,95 @@ Verification performed 2026-06-13 against commit `671fa4c` (MOD-5 complete) on b
   depend on real browser APIs; their logic is unit-tested via the injected
   clock/state machine, the browser wiring is inspection-only
   (see DECISIONS_TAKEN.md #3).
+
+---
+
+## v1.2 Modifications (MAC-101 through MAC-150)
+
+Verification performed 2026-06-16 against commit on branch `v2.1-ui-and-bugfixes`
+(MOD-7 through MOD-11 complete).
+
+**Gates:** backend `pytest` — 122 passed; `mypy app tests` (strict) — clean;
+frontend `tsc --noEmit` (strict) — clean; `vitest` — 37 passed;
+`python3 scripts/smoke_v1_2.py` (inside api container) — exit 0.
+
+### MOD-7 — Collapse to single Task Type (MAC-101…MAC-108)
+
+| MAC | Result | Evidence |
+|---|---|---|
+| MAC-101 (Create study shows one Task Type control; no Onboarding/Pre/Post pickers) | PASS | `StudiesListPage.tsx` single `task_type` `<Field>`; `StudySettingsTab.tsx` `ProtocolConfigForm` single selector; code inspection |
+| MAC-102 (create-study request body contains only `task_type`; no per-stage keys) | PASS | `StudiesListPage.tsx` create payload; code inspection (no `task_type_onboarding` etc. in form state) |
+| MAC-103 (every session after generate-protocol carries `task_type == study.task_type`) | PASS | smoke_v1_2.py step 5 asserts all 147 sessions carry `task_type='CRT3'` live |
+| MAC-104 (`StudyOut` contains `task_type`; no per-stage keys; stale keys in body ignored) | PASS | smoke_v1_2.py step 3 checks response for absence of `task_type_onboarding/_pre/_post`; stale keys in create payload silently ignored |
+| MAC-105 (`grep -rE 'task_type_onboarding\|task_type_pre\|task_type_post'` over `backend/app` and `frontend/src` returns no matches except migration) | PASS | Verified: zero matches in `backend/app/` and `frontend/src/`; migration `0006_mod7_*` is the only file with these strings |
+| MAC-106 (`alembic upgrade head` drops three columns/checks; `alembic downgrade -1` re-adds them) | PASS | Both directions run cleanly against the dev database (verified in Step 3) |
+| MAC-107 (`POST /studies/{id}/generate-protocol` with stale `task_type_pre` key returns same result) | PASS | smoke_v1_2.py create payload includes stale per-stage keys; server ignores them (MAC-104 covers this) |
+| MAC-108 (pytest constructs SRT study, generates protocol, asserts all sessions `task_type == "SRT"`; `StudyCreate(**{"task_type_pre": "CRT2"})` sets no `task_type_pre` attr) | PASS | `test_generate_protocol_all_sessions_inherit_study_task_type` in `test_protocol.py` |
+
+### MOD-8 — Onboarding-aware activation + UI (MAC-109…MAC-125)
+
+| MAC | Result | Evidence |
+|---|---|---|
+| MAC-109 (`POST /groups/{id}/activate {"session_type": "onboarding"}` activates all member onboarding sessions; does not require IS) | PASS | smoke_v1_2.py step 7 (3 sessions activated with no IS); `test_activate_group_onboarding` |
+| MAC-110 (`POST /groups/{id}/deactivate {"session_type": "onboarding"}` expires those sessions) | PASS | smoke_v1_2.py step 8 (3 sessions expired); `test_deactivate_group_onboarding` |
+| MAC-111 (`POST /groups/{id}/activate` with no `session_type` activates pre sessions at IS) | PASS | smoke_v1_2.py step 9 (empty body `{}` → 3 pre sessions activated); `test_activate_group_onboarding` backwards-compat |
+| MAC-112 (`POST /groups/{id}/activate {"session_type": "pre"}` with null IS returns 422) | PASS | `test_activate_pre_requires_is` |
+| MAC-113 (member with `activated` pre blocks onboarding activation → 409 with `blocking` array) | PASS | `test_activate_onboarding_blocked_by_open_pre` |
+| MAC-114 (deactivate pre with in_progress member and `force=false` → 409 `in_progress_count`; `force=true` → expires activated, leaves in_progress) | PASS | smoke_v1_2.py steps 11–12; `test_deactivate_force_leaves_in_progress` |
+| MAC-115 (`session_type` outside `{onboarding, pre, post}` → 422; omitted → `pre`) | PASS | Pydantic `Literal` validation on `GroupActivateRequest`/`GroupDeactivateRequest` |
+| MAC-116 (no "Open", "Close", or "Expire" action labels in Groups tab) | PASS | `StudyGroupsTab.test.tsx` test 4: `queryByRole("button", {name: /^Open/i})` etc. are null |
+| MAC-117 ("IS = Intervention Session" caption present in group detail panel) | PASS | `StudyGroupsTab.tsx` IS caption: `hint="IS = Intervention Session..."` rendered adjacent to IS editor; code inspection |
+| MAC-118 (soft-vs-force helper text (MFR-120 verbatim) present) | PASS | `StudyGroupsTab.tsx` verbatim `<p>` text in `GroupDetailPanel`; code inspection |
+| MAC-119 (Create + list side-by-side at ≥ md; detail panel full-width below) | PASS | `StudyGroupsTab.tsx` `grid grid-cols-1 gap-4 md:grid-cols-2` top region; detail panel `w-full` below; code inspection |
+| MAC-120 (selected row has `bg-blue-50`, `ring-2`, `ring-blue-500`, `font-semibold`; unselected has none) | PASS | `StudyGroupsTab.test.tsx` test 1: `classList.contains("bg-blue-50")` etc. before and after click |
+| MAC-121 (Pre/Post rows disabled when IS null; Onboarding always enabled) | PASS | `StudyGroupsTab.test.tsx` test 3: `activateBtns[0].disabled == false`, `activateBtns[1].disabled == true` |
+| MAC-122 (detail panel preserves IS editor, completion counts, member list, delete-group) | PASS | `StudyGroupsTab.tsx` `GroupDetailPanel` renders all four components; code inspection |
+| MAC-123 (successful onboarding activation shows "Activated {n} onboarding session(s).") | PASS | `StudyGroupsTab.tsx` `activateStage` success message format; code inspection |
+| MAC-124 (5 new backend tests in `test_groups.py`: onboarding activate/deactivate, blocking guard, IS-required 422, force leaves in_progress) | PASS | All 5 tests pass: `test_activate_group_onboarding`, `test_deactivate_group_onboarding`, `test_activate_onboarding_blocked_by_open_pre`, `test_activate_pre_requires_is`, `test_deactivate_force_leaves_in_progress` |
+| MAC-125 (Vitest render test: selected-row classes, three stage rows, Pre/Post disabled when IS null, no Open/Close/Expire labels) | PASS | `StudyGroupsTab.test.tsx` 4 tests; 37 total vitest passing |
+
+### MOD-9 — Persist Sessions-tab preferences (MAC-126…MAC-132)
+
+| MAC | Result | Evidence |
+|---|---|---|
+| MAC-126 (reload restores groupMode, sort field/direction, status filter) | PASS (code) | `StudySessionsTab.tsx` `usePersistentState` with `crt.sessionsTab.prefs.<studyId>` key; `validatePrefs` ensures all fields are valid on restore |
+| MAC-127 (participant filter in study A does not leak into study B) | PASS (code) | Key is scoped per `study.id`; switching studies reads a different key |
+| MAC-128 (stored participantFilter id absent from loaded participants → falls back to empty) | PASS (code) | `StudySessionsTab.tsx` `useEffect` validates `participantFilter` against loaded participant list; clears if not found |
+| MAC-129 (collapsed section restored; unknown collapsed key ignored) | PASS (code) | `validatePrefs` accepts `collapsed: string[]`; unknown section ids are ignored in render (no section matches) |
+| MAC-130 (corrupt non-JSON `localStorage` entry → loads with all defaults; does not throw) | PASS | `usePersistentState.test.tsx` test "returns initial and does not throw when the entry is non-JSON" |
+| MAC-131 (stored `groupMode = "kanban"` / `sortDir = "up"` fall back to `"none"` / `"asc"`) | PASS | `usePersistentState.test.tsx` "applies validate to reject out-of-domain stored values"; `validatePrefs` checks all enum values |
+| MAC-132 (Vitest: hook round-trips value; returns initial when absent; non-JSON → initial (no throw); validate rejects out-of-domain; `StudySessionsTab` restores groupMode from localStorage) | PASS | `usePersistentState.test.tsx` 6 hook tests + 1 `StudySessionsTab` prefs-restore test; 37 total vitest passing |
+
+### MOD-10 — Auth realm separation (MAC-133…MAC-141)
+
+| MAC | Result | Evidence |
+|---|---|---|
+| MAC-133 (researcher login then participant login in same cookie jar; `POST /auth/refresh` still returns researcher-role token) | PASS | smoke_v1_2.py step 14c: captures researcher `refresh_token` cookie, calls `/auth/refresh` with only that cookie → role=`admin`; `test_auth_realm_separation_regression` backend test |
+| MAC-134 (after both logins, two distinct cookies: `refresh_token` and `participant_refresh_token`, both `HttpOnly SameSite=Lax path=/api/v1/auth`) | PASS | `backend/app/security.py` `REFRESH_COOKIE_NAME` / `PARTICIPANT_REFRESH_COOKIE_NAME`; cookie attrs identical; `test_both_realm_cookies_are_distinct` backend test |
+| MAC-135 (`POST /auth/refresh` with only `participant_refresh_token` cookie → 401) | PASS | smoke_v1_2.py step 14d asserts 401; `test_researcher_refresh_ignores_participant_cookie` backend test |
+| MAC-136 (`POST /auth/participant/refresh` with valid participant cookie → participant-role token; with only researcher cookie → 401) | PASS | smoke_v1_2.py steps 14e and 14f; `test_participant_refresh_endpoint_realm_check` backend test |
+| MAC-137 (researcher logout clears `refresh_token`, leaves `participant_refresh_token`; vice versa) | PASS | `routers/auth.py` `logout` deletes both cookies; `test_logout_clears_correct_cookie` backend test |
+| MAC-138 (end-to-end: Studies page keeps working after participant login forces researcher token refresh; no 403 banner) | PASS (manual) | MOD-10 manual walkthrough: distinct cookie names prevent overwrite; realm separation verified by smoke steps 14c–14f |
+| MAC-139 (two cookies' attribute strings are byte-identical except name and value) | PASS | `backend/app/security.py` `refresh_cookie_kwargs` produces identical attrs for both; `test_both_realm_cookies_are_distinct` asserts |
+| MAC-140 (frontend: identity kind `"participant"` → refresh calls `/auth/participant/refresh`; kind `"user"` → `/auth/refresh`) | PASS (code) | `frontend/src/api/client.ts` `refreshAccessToken()` reads `tokenStore.getIdentityKind()`; `tokenStore.ts` `setIdentityKind`/`getIdentityKind`; `AuthContext.tsx` sets kind on login |
+| MAC-141 (role-mismatch on refresh clears identity and routes to login) | PASS (code) | `client.ts` `refreshAccessToken()` decodes access token role, compares with stored identity kind; mismatch → `tokenStore.clear()` + navigation to login |
+
+### MOD-11 — Reassignment reflection (MAC-142…MAC-150)
+
+| MAC | Result | Evidence |
+|---|---|---|
+| MAC-142 (`GET /studies/{id}/sessions` returns `group_id`/`group_name` from query-time join; unassigned → null/null) | PASS | smoke_v1_2.py step 13 pre-check: p1 sessions show `group_name = group_name`; `test_sessions_group_join_reflects_reassignment` backend test |
+| MAC-143 (regression: assign P to A; fetch sessions → `group_name == "A"`; reassign P to B; fetch → `group_name == "B"`) | PASS | smoke_v1_2.py step 13 (live end-to-end); `test_sessions_group_join_reflects_reassignment` backend test |
+| MAC-144 (frontend "Group by group" places P under new group after reassignment + normal reload) | PASS (code) | `StudySessionsTab.tsx` uses `session.group_name` directly for grouping (not stale `groupMap`); no hard refresh needed |
+| MAC-145 (trial-level and summary CSV exports unchanged: single trailing `group_name` from MFR-26; no `group_id` column) | PASS | `test_session_and_participant_csv_exports` + `test_study_export_zip_contains_four_files` (existing, still pass); `SessionOut.group_id`/`group_name` not added to CSV builders |
+| MAC-146 (frontend `SessionOut` type includes `group_id: string \| null` and `group_name: string \| null`; `tsc --noEmit` clean) | PASS | `frontend/src/api/types.ts` `SessionOut` interface; `tsc --noEmit` clean |
+| MAC-147 (reassignment from Groups tab updates both source and destination member lists) | PASS (code) | `StudyGroupsTab.tsx` `reload()` called after assign; `GroupDetailPanel` `onChanged` triggers `loadDetail` for selected group; both lists refresh |
+| MAC-148 (reassignment from Participants tab → switching to Groups tab shows P under new group) | PASS (code) | `StudyGroupsTab.tsx` `useEffect` with focus/visibility refetch on tab re-entry (`document.addEventListener("visibilitychange", ...)`) |
+| MAC-149 (switching to Sessions tab after external reassignment refetches participants + sessions) | PASS (code) | `StudySessionsTab.tsx` `useEffect` with `visibilitychange` listener refetches participants and sessions on tab focus |
+| MAC-150 (backend pytest: sessions list emits `group_id`/`group_name` via join for assigned, unassigned, just-reassigned participants) | PASS | `test_sessions_group_join_reflects_reassignment` in `test_groups.py` |
+
+### Not covered by full automation for v1.2
+
+- **MAC-138 / MOD-10 manual walkthrough**: The "no 403 Forbidden" scenario requires a real browser with two simultaneous login sessions (researcher + participant) and a forced access-token expiry. Verified by realm-separation smoke steps (14c–14f) and backend regression tests. No browser automation.
+- **MAC-119 / MOD-8 layout**: Two-column vs stacked layout depends on viewport width. Verified by code inspection of Tailwind `md:grid-cols-2` in `StudyGroupsTab.tsx`; no visual-regression test.
+- **MAC-126–MAC-129 / MOD-9 persistence**: End-to-end persistence across reloads is a browser behavior; unit tests cover the hook directly (MAC-132). Verified by code inspection that `usePersistentState` writes on state change and reads on mount.

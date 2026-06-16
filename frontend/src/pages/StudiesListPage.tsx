@@ -37,9 +37,6 @@ function CreateStudyForm({ onCreated }: { onCreated: (study: StudyOut) => void }
   // MOD-3 protocol configuration.
   const [numInterventionSessions, setNumInterventionSessions] = useState(24);
   const [sessionsPerWeek, setSessionsPerWeek] = useState(3);
-  const [taskTypeOnboarding, setTaskTypeOnboarding] = useState<TaskType>("CRT4");
-  const [taskTypePre, setTaskTypePre] = useState<TaskType>("CRT4");
-  const [taskTypePost, setTaskTypePost] = useState<TaskType>("CRT4");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -62,9 +59,6 @@ function CreateStudyForm({ onCreated }: { onCreated: (study: StudyOut) => void }
         task_type: taskType,
         num_intervention_sessions: numInterventionSessions,
         sessions_per_week: sessionsPerWeek,
-        task_type_onboarding: taskTypeOnboarding,
-        task_type_pre: taskTypePre,
-        task_type_post: taskTypePost,
       };
       if (description.trim()) payload.description = description.trim();
       const study = await studiesApi.create(payload);
@@ -74,9 +68,6 @@ function CreateStudyForm({ onCreated }: { onCreated: (study: StudyOut) => void }
       setTaskType("CRT2");
       setNumInterventionSessions(24);
       setSessionsPerWeek(3);
-      setTaskTypeOnboarding("CRT4");
-      setTaskTypePre("CRT4");
-      setTaskTypePost("CRT4");
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -139,15 +130,6 @@ function CreateStudyForm({ onCreated }: { onCreated: (study: StudyOut) => void }
               value={sessionsPerWeek}
               onChange={(e) => setSessionsPerWeek(e.target.valueAsNumber || 0)}
             />
-          </Field>
-          <Field label="Onboarding task type">
-            <TaskTypeSelect value={taskTypeOnboarding} onChange={setTaskTypeOnboarding} />
-          </Field>
-          <Field label="Pre task type">
-            <TaskTypeSelect value={taskTypePre} onChange={setTaskTypePre} />
-          </Field>
-          <Field label="Post task type">
-            <TaskTypeSelect value={taskTypePost} onChange={setTaskTypePost} />
           </Field>
         </div>
         {multipleOfError && <p className="text-sm text-red-600">{multipleOfError}</p>}

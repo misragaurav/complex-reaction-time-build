@@ -50,11 +50,12 @@ def build_protocol_specs(
     num_intervention_sessions: int,
     sessions_per_week: int,
     week_start: int,
-    task_type_onboarding: str,
-    task_type_pre: str,
-    task_type_post: str,
+    task_type: str,
 ) -> list[ProtocolSessionSpec]:
-    """Full ordered list of ``1 + 2N`` session specs for one participant (MFR-13/17)."""
+    """Full ordered list of ``1 + 2N`` session specs for one participant (MFR-13/17).
+
+    MOD-7: all stages (onboarding, pre, post) use the single study ``task_type``.
+    """
     specs: list[ProtocolSessionSpec] = [
         {
             "order_index": 1,
@@ -63,7 +64,7 @@ def build_protocol_specs(
             "week_number": None,
             "day_within_week": None,
             "display_label": compute_display_label("onboarding", None, None),
-            "task_type": task_type_onboarding,
+            "task_type": task_type,
         }
     ]
     for k in range(1, num_intervention_sessions + 1):
@@ -76,7 +77,7 @@ def build_protocol_specs(
                 "week_number": week,
                 "day_within_week": day,
                 "display_label": compute_display_label("pre", week, day),
-                "task_type": task_type_pre,
+                "task_type": task_type,
             }
         )
         specs.append(
@@ -87,7 +88,7 @@ def build_protocol_specs(
                 "week_number": week,
                 "day_within_week": day,
                 "display_label": compute_display_label("post", week, day),
-                "task_type": task_type_post,
+                "task_type": task_type,
             }
         )
     return specs

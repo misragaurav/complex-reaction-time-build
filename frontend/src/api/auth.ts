@@ -18,6 +18,10 @@ export function refresh(): Promise<AccessTokenResponse> {
   return apiRequest<AccessTokenResponse>("/auth/refresh", { method: "POST", skipAuthRetry: true });
 }
 
+export function participantRefresh(): Promise<AccessTokenResponse> {
+  return apiRequest<AccessTokenResponse>("/auth/participant/refresh", { method: "POST", skipAuthRetry: true });
+}
+
 export function logout(): Promise<void> {
   return apiRequest<void>("/auth/logout", { method: "POST", skipAuthRetry: true });
 }

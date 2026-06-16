@@ -49,6 +49,9 @@ class SessionOut(BaseModel):
     expired_at: datetime.datetime | None  # MOD-5
     created_at: datetime.datetime
     stats: SessionStatsBrief
+    # MOD-11: group membership at query time (null when unassigned).
+    group_id: uuid.UUID | None = None
+    group_name: str | None = None
 
 
 class SessionActionRequest(BaseModel):
@@ -95,9 +98,6 @@ class GenerateProtocolRequest(BaseModel):
     participant_ids: list[uuid.UUID] | None = None
     num_intervention_sessions: int | None = Field(default=None, ge=1, le=156)
     week_start: int = Field(default=1, ge=1, le=52)
-    task_type_onboarding: TaskType | None = None
-    task_type_pre: TaskType | None = None
-    task_type_post: TaskType | None = None
 
 
 class ProtocolCreatedItem(BaseModel):
