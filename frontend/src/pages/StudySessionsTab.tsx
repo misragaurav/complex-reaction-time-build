@@ -11,6 +11,7 @@ import type {
   StudyOut,
 } from "../api/types";
 import { Button, ErrorBanner, Field, inputClass, selectClass } from "../components/forms";
+import { usePersistentState } from "../hooks/usePersistentState";
 import { downloadBlob } from "../utils/download";
 
 const STATUS_LABELS: Record<SessionStatus, string> = {
@@ -52,6 +53,51 @@ const SESSION_TYPE_ORDER: Record<string, number> = {
   pre: 1,
   post: 2,
 };
+
+// MFR-130..135: persisted Sessions-tab preferences (one object per study).
+const VALID_SORT_FIELDS: SortField[] = [
+  "participant_code", "order_index", "display_label", "session_type",
+  "code", "task_type", "status", "attempt",
+  "activated_at", "completed_at", "trimmed_mean_rt_ms", "accuracy_pct",
+];
+const VALID_GROUP_MODES = ["none", "participant", "group"] as const;
+const VALID_SORT_DIRS = ["asc", "desc"] as const;
+const VALID_STATUS_FILTERS = [
+  "", "created", "activated", "in_progress", "completed", "abandoned", "expired", "cancelled",
+] as const;
+
+interface StoredPrefs {
+  groupMode: "none" | "participant" | "group";
+  sortField: SortField;
+  sortDir: "asc" | "desc";
+  statusFilter: string;
+  participantFilter: string;
+  collapsed: string[];
+}
+
+const DEFAULT_PREFS: StoredPrefs = {
+  groupMode: "none",
+  sortField: "participant_code",
+  sortDir: "asc",
+  statusFilter: "",
+  participantFilter: "",
+  collapsed: [],
+};
+
+function validatePrefs(raw: unknown): StoredPrefs | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const r = raw as Record<string, unknown>;
+
+  const groupMode = VALID_GROUP_MODES.includes(r.groupMode as "none") ? (r.groupMode as StoredPrefs["groupMode"]) : "none";
+  const sortField = VALID_SORT_FIELDS.includes(r.sortField as SortField) ? (r.sortField as SortField) : "participant_code";
+  const sortDir = VALID_SORT_DIRS.includes(r.sortDir as "asc") ? (r.sortDir as "asc" | "desc") : "asc";
+  const statusFilter = VALID_STATUS_FILTERS.includes(r.statusFilter as "") ? (r.statusFilter as string) : "";
+  const participantFilter = typeof r.participantFilter === "string" ? r.participantFilter : "";
+  const rawCollapsed = r.collapsed;
+  const collapsed = Array.isArray(rawCollapsed) ? (rawCollapsed.filter((v): v is string => typeof v === "string")) : [];
+
+  return { groupMode, sortField, sortDir, statusFilter, participantFilter, collapsed };
+}
 
 function getFieldValue(session: SessionOut, field: SortField): string | number | null {
   switch (field) {
@@ -387,18 +433,54 @@ function SortableTh({
 export default function StudySessionsTab({ study }: { study: StudyOut }): JSX.Element {
   const [sessions, setSessions] = useState<SessionOut[] | null>(null);
   const [participants, setParticipants] = useState<ParticipantOut[]>([]);
-  const [statusFilter, setStatusFilter] = useState<SessionStatus | "">("");
-  const [participantFilter, setParticipantFilter] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [groupMode, setGroupMode] = useState<"none" | "participant" | "group">("none");
-  const [sortField, setSortField] = useState<SortField>("participant_code");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+
+  // MFR-130: persist table preferences per study (MFR-132: single key per study).
+  const [prefs, setPrefs] = usePersistentState<StoredPrefs>(
+    `crt.sessionsTab.prefs.${study.id}`,
+    DEFAULT_PREFS,
+    { validate: validatePrefs },
+  );
+
+  // Convenience aliases that mirror the old useState shapes.
+  const groupMode = prefs.groupMode;
+  const sortField = prefs.sortField;
+  const sortDir = prefs.sortDir;
+  const statusFilter = prefs.statusFilter;
+  const participantFilter = prefs.participantFilter;
+  const collapsed = new Set(prefs.collapsed);
+
+  function setGroupMode(gm: StoredPrefs["groupMode"]): void {
+    // MFR-133: reset collapsed when switching group mode.
+    setPrefs((p) => ({ ...p, groupMode: gm, collapsed: [] }));
+  }
+  function setSortField(field: SortField): void {
+    setPrefs((p) => ({ ...p, sortField: field }));
+  }
+  function setSortDir(updater: "asc" | "desc" | ((prev: "asc" | "desc") => "asc" | "desc")): void {
+    setPrefs((p) => ({
+      ...p,
+      sortDir: typeof updater === "function" ? updater(p.sortDir) : updater,
+    }));
+  }
+  function setStatusFilter(sf: string): void {
+    setPrefs((p) => ({ ...p, statusFilter: sf }));
+  }
+  function setParticipantFilter(pf: string): void {
+    setPrefs((p) => ({ ...p, participantFilter: pf }));
+  }
+  function setCollapsed(updater: Set<string> | ((prev: Set<string>) => Set<string>)): void {
+    setPrefs((p) => {
+      const prevSet = new Set(p.collapsed);
+      const nextSet = typeof updater === "function" ? updater(prevSet) : updater;
+      return { ...p, collapsed: [...nextSet] };
+    });
+  }
 
   const reload = useCallback((): void => {
     sessionsApi
       .list(study.id, {
-        status: statusFilter === "" ? undefined : statusFilter,
+        status: statusFilter === "" ? undefined : (statusFilter as SessionStatus),
         participantId: participantFilter === "" ? undefined : participantFilter,
       })
       .then(setSessions)
@@ -413,13 +495,19 @@ export default function StudySessionsTab({ study }: { study: StudyOut }): JSX.El
   useEffect(() => {
     participantsApi
       .list(study.id)
-      .then(setParticipants)
+      .then((parts) => {
+        setParticipants(parts);
+        // MFR-131: if stored participantFilter id is no longer in the loaded list, clear it.
+        setPrefs((p) => {
+          if (p.participantFilter && !parts.find((pt) => pt.id === p.participantFilter)) {
+            return { ...p, participantFilter: "" };
+          }
+          return p;
+        });
+      })
       .catch((err: unknown) => setError(errorMessage(err)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [study.id]);
-
-  useEffect(() => {
-    setCollapsed(new Set());
-  }, [groupMode]);
 
   // MOD-11: refetch sessions when the window regains focus so that a reassignment
   // made on another tab is reflected immediately without a hard page reload.

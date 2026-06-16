@@ -192,15 +192,15 @@ describe("StudyGroupsTab — MAC-125 render tests", () => {
     const forceBtns = screen.getAllByRole("button", { name: "Force deactivate" }) as HTMLButtonElement[];
 
     // Index 0 = Onboarding, 1 = Pre, 2 = Post.
-    expect(activateBtns[0].disabled).toBe(false);
-    expect(activateBtns[1].disabled).toBe(true);
-    expect(activateBtns[2].disabled).toBe(true);
-    expect(deactivateBtns[0].disabled).toBe(false);
-    expect(deactivateBtns[1].disabled).toBe(true);
-    expect(deactivateBtns[2].disabled).toBe(true);
-    expect(forceBtns[0].disabled).toBe(false);
-    expect(forceBtns[1].disabled).toBe(true);
-    expect(forceBtns[2].disabled).toBe(true);
+    expect(activateBtns[0]!.disabled).toBe(false);
+    expect(activateBtns[1]!.disabled).toBe(true);
+    expect(activateBtns[2]!.disabled).toBe(true);
+    expect(deactivateBtns[0]!.disabled).toBe(false);
+    expect(deactivateBtns[1]!.disabled).toBe(true);
+    expect(deactivateBtns[2]!.disabled).toBe(true);
+    expect(forceBtns[0]!.disabled).toBe(false);
+    expect(forceBtns[1]!.disabled).toBe(true);
+    expect(forceBtns[2]!.disabled).toBe(true);
   });
 
   it("no 'Open', 'Close', or 'Expire' action labels appear in the rendered output", async () => {
