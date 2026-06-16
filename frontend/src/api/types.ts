@@ -336,10 +336,11 @@ export interface GroupAssignResponse {
   blocked: BlockedItem[];
 }
 
-// MOD-5: group activation/deactivation types (MFR-31/32).
+// MOD-5/MOD-8/MOD-12: group activation/deactivation types.
 export interface GroupActivateRequest {
-  // MOD-8: extended to include "onboarding" (MFR-110).
   session_type?: "onboarding" | "pre" | "post";
+  // MOD-12 (MFR-209): explicit IS; required for pre/post, coerced to null for onboarding.
+  intervention_session_number?: number | null;
 }
 
 export interface GroupActivatedItem {
@@ -366,8 +367,9 @@ export interface BlockingItem {
 }
 
 export interface GroupDeactivateRequest {
-  // MOD-8: session_type mirrors GroupActivateRequest (MFR-110).
   session_type?: "onboarding" | "pre" | "post";
+  // MOD-12 (MFR-210): same rules as GroupActivateRequest.
+  intervention_session_number?: number | null;
   force?: boolean;
 }
 
@@ -381,6 +383,32 @@ export interface GroupExpiredItem {
 export interface GroupDeactivateResponse {
   expired: GroupExpiredItem[];
   in_progress_count: number;
+}
+
+// MOD-12 (MFR-214): sessions-overview response types.
+export interface StageStatusCounts {
+  created: number;
+  expired: number;
+  activated: number;
+  in_progress: number;
+  completed: number;
+  abandoned: number;
+  cancelled: number;
+}
+
+export interface StageOverview {
+  session_type: "onboarding" | "pre" | "post";
+  intervention_session_number: number | null;
+  display_label: string;
+  week_number: number | null;
+  day_within_week: number | null;
+  order_index: number;
+  member_total: number;
+  counts: StageStatusCounts;
+}
+
+export interface GroupSessionsOverviewResponse {
+  stages: StageOverview[];
 }
 
 /** `{is_active?, reset_password?:true}` per API #13. */

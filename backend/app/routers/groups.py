@@ -29,9 +29,13 @@ from app.schemas.groups import (
     GroupExpiredItem,
     GroupMember,
     GroupOut,
+    GroupSessionsOverviewResponse,
     GroupUpdate,
     ReassignedItem,
+    StageOverview,
+    StageStatusCounts,
 )
+from app.services.protocol import compute_display_label
 
 router = APIRouter(tags=["groups"])
 
@@ -315,15 +319,8 @@ def _group_member_ids(db: DbDep, group_id: uuid.UUID) -> list[uuid.UUID]:
 def activate_group(
     group_id: uuid.UUID, payload: GroupActivateRequest, user: CurrentUserDep, db: DbDep
 ) -> GroupActivateResponse:
-    """MOD-5/MOD-8: activate sessions for all group members by stage (MFR-110..115)."""
+    """MOD-5/MOD-8/MOD-12: activate sessions for all group members by stage."""
     group = _get_group(db, group_id)
-
-    # MFR-111: pre/post require IS; onboarding does not.
-    if payload.session_type in ("pre", "post") and group.current_intervention_session is None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="current_intervention_session must be set to activate pre/post sessions.",
-        )
 
     member_ids = _group_member_ids(db, group_id)
 
@@ -370,7 +367,7 @@ def activate_group(
         participant_cache2[pid] = participant
 
         if payload.session_type == "onboarding":
-            # MFR-112: match onboarding sessions (IS IS NULL, no IS required).
+            # MFR-112: match onboarding sessions (IS IS NULL).
             sessions = db.execute(
                 select(SessionModel).where(
                     SessionModel.participant_id == pid,
@@ -380,10 +377,11 @@ def activate_group(
                 )
             ).scalars().all()
         else:
+            # MFR-211: use explicit IS from payload, not group counter.
             sessions = db.execute(
                 select(SessionModel).where(
                     SessionModel.participant_id == pid,
-                    SessionModel.intervention_session_number == group.current_intervention_session,
+                    SessionModel.intervention_session_number == payload.intervention_session_number,
                     SessionModel.session_type == payload.session_type,
                     SessionModel.status.in_(["created", "expired"]),
                 )
@@ -403,6 +401,10 @@ def activate_group(
                     order_index=s.order_index,
                 )
             )
+
+    # MFR-212: update counter as side effect on any pre/post call (D-12.5).
+    if payload.session_type in ("pre", "post"):
+        group.current_intervention_session = payload.intervention_session_number
     db.commit()
     return GroupActivateResponse(activated=activated, session_type=payload.session_type)
 
@@ -411,15 +413,8 @@ def activate_group(
 def deactivate_group(
     group_id: uuid.UUID, payload: GroupDeactivateRequest, user: CurrentUserDep, db: DbDep
 ) -> GroupDeactivateResponse:
-    """MOD-5/MOD-8: expire activated sessions for all group members by stage (MFR-110..114)."""
+    """MOD-5/MOD-8/MOD-12: expire activated sessions for all group members by stage."""
     group = _get_group(db, group_id)
-
-    # MFR-111: pre/post require IS; onboarding does not.
-    if payload.session_type in ("pre", "post") and group.current_intervention_session is None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="current_intervention_session must be set to deactivate pre/post sessions.",
-        )
 
     member_ids = _group_member_ids(db, group_id)
 
@@ -434,10 +429,11 @@ def deactivate_group(
             )
         ).scalars().all()
     else:
+        # MFR-211: use explicit IS from payload, not group counter.
         sessions = db.execute(
             select(SessionModel).where(
                 SessionModel.participant_id.in_(member_ids),
-                SessionModel.intervention_session_number == group.current_intervention_session,
+                SessionModel.intervention_session_number == payload.intervention_session_number,
                 SessionModel.session_type == payload.session_type,
                 SessionModel.status.in_(["activated", "in_progress"]),
             )
@@ -473,5 +469,66 @@ def deactivate_group(
                 display_label=s.display_label,
             )
         )
+
+    # MFR-212: update counter as side effect on any pre/post call (D-12.5).
+    if payload.session_type in ("pre", "post"):
+        group.current_intervention_session = payload.intervention_session_number
     db.commit()
     return GroupDeactivateResponse(expired=expired, in_progress_count=len(in_progress))
+
+
+@router.get("/groups/{group_id}/sessions-overview", response_model=GroupSessionsOverviewResponse)
+def sessions_overview(
+    group_id: uuid.UUID, user: CurrentUserDep, db: DbDep
+) -> GroupSessionsOverviewResponse:
+    """MOD-12 (MFR-214): per-stage session status counts for the group."""
+    _get_group(db, group_id)  # raises 404 if not found
+    member_ids = _group_member_ids(db, group_id)
+
+    if not member_ids:
+        return GroupSessionsOverviewResponse(stages=[])
+
+    all_sessions = db.execute(
+        select(SessionModel).where(SessionModel.participant_id.in_(member_ids))
+    ).scalars().all()
+
+    if not all_sessions:
+        return GroupSessionsOverviewResponse(stages=[])
+
+    ALL_STATUSES = ("created", "expired", "activated", "in_progress", "completed", "abandoned", "cancelled")
+
+    # Group by (session_type, intervention_session_number).
+    stage_data: dict[tuple, dict] = {}
+    for s in all_sessions:
+        key = (s.session_type, s.intervention_session_number)
+        if key not in stage_data:
+            stage_data[key] = {
+                "week_number": s.week_number,
+                "day_within_week": s.day_within_week,
+                "min_order_index": s.order_index,
+                "members": set(),
+                "counts": {st: 0 for st in ALL_STATUSES},
+            }
+        d = stage_data[key]
+        d["min_order_index"] = min(d["min_order_index"], s.order_index)
+        d["members"].add(s.participant_id)
+        bucket = s.status if s.status in ALL_STATUSES else "cancelled"
+        d["counts"][bucket] += 1
+
+    stages: list[StageOverview] = []
+    for (session_type, isn), d in sorted(stage_data.items(), key=lambda x: x[1]["min_order_index"]):
+        label = compute_display_label(session_type, d["week_number"], d["day_within_week"])
+        stages.append(
+            StageOverview(
+                session_type=session_type,
+                intervention_session_number=isn,
+                display_label=label,
+                week_number=d["week_number"],
+                day_within_week=d["day_within_week"],
+                order_index=d["min_order_index"],
+                member_total=len(d["members"]),
+                counts=StageStatusCounts(**d["counts"]),
+            )
+        )
+
+    return GroupSessionsOverviewResponse(stages=stages)

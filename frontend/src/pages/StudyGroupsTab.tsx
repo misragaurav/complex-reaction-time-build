@@ -1,17 +1,21 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { ApiError, errorMessage } from "../api/client";
 import { groupsApi } from "../api/groups";
-import type { GroupDetailOut, GroupOut, StudyOut } from "../api/types";
-import { Button, ErrorBanner, Field, inputClass, SuccessBanner } from "../components/forms";
+import type {
+  GroupDetailOut,
+  GroupOut,
+  GroupSessionsOverviewResponse,
+  StageOverview,
+  StageStatusCounts,
+  StudyOut,
+} from "../api/types";
+import { Button, ErrorBanner, Field, inputClass, selectClass, SuccessBanner } from "../components/forms";
 
 const SIZE_WARNING = "Groups are recommended to have 4–6 participants.";
 
 function sizeWarn(count: number): boolean {
   return count < 4 || count > 6;
 }
-
-const FORCE_DEACTIVATE_HELPER =
-  "Deactivate closes the slot for everyone who hasn't started; it is blocked if any member is mid-session (it won't interrupt them). Force deactivate closes the slot now even if some members are mid-session — those in-progress runs finish, but no one else can start.";
 
 function CreateGroupForm({
   studyId,
@@ -66,49 +70,48 @@ function CreateGroupForm({
   );
 }
 
-type SessionStageType = "onboarding" | "pre" | "post";
+// ---- Stage selector helpers (MOD-12) -----------------------------------------
 
-interface StageRowProps {
-  label: string;
-  sessionType: SessionStageType;
-  disabled: boolean;
-  hint?: string;
-  busy: boolean;
-  onActivate: (sessionType: SessionStageType) => void;
-  onDeactivate: (sessionType: SessionStageType, force: boolean) => void;
+function stageKey(stage: StageOverview): string {
+  return `${stage.session_type}:${stage.intervention_session_number ?? "null"}`;
 }
 
-function StageRow({ label, sessionType, disabled, hint, busy, onActivate, onDeactivate }: StageRowProps): JSX.Element {
-  return (
-    <div className="flex flex-wrap items-center gap-2 rounded border border-gray-100 bg-gray-50 px-3 py-2">
-      <span className="w-36 shrink-0 text-sm font-medium text-gray-700">{label}</span>
-      <div className="flex flex-wrap gap-2">
-        <Button
-          variant="secondary"
-          disabled={disabled || busy}
-          onClick={() => onActivate(sessionType)}
-        >
-          Activate
-        </Button>
-        <Button
-          variant="secondary"
-          disabled={disabled || busy}
-          onClick={() => onDeactivate(sessionType, false)}
-        >
-          Deactivate
-        </Button>
-        <Button
-          variant="secondary"
-          disabled={disabled || busy}
-          onClick={() => onDeactivate(sessionType, true)}
-        >
-          Force deactivate
-        </Button>
-      </div>
-      {disabled && hint && <p className="w-full text-xs text-amber-700">{hint}</p>}
-    </div>
-  );
+function parseStageKey(key: string): {
+  session_type: "onboarding" | "pre" | "post";
+  intervention_session_number: number | null;
+} {
+  const colonIdx = key.indexOf(":");
+  const st = key.slice(0, colonIdx) as "onboarding" | "pre" | "post";
+  const isnStr = key.slice(colonIdx + 1);
+  return {
+    session_type: st,
+    intervention_session_number: isnStr === "null" ? null : Number(isnStr),
+  };
 }
+
+function buildActivateHint(counts: StageStatusCounts): string {
+  const parts: string[] = [];
+  if (counts.completed > 0) parts.push(`${counts.completed} completed`);
+  const open = counts.activated + counts.in_progress;
+  if (open > 0) parts.push(`${open} already open`);
+  const other = counts.abandoned + counts.cancelled;
+  if (other > 0) parts.push(`${other} other`);
+  return parts.length > 0 ? `Cannot activate: ${parts.join(", ")}.` : "No activatable sessions.";
+}
+
+function buildDiagnostic(stage: StageOverview | undefined): string {
+  if (!stage) return "0 sessions activated: no protocol generated for this stage.";
+  const counts = stage.counts;
+  const parts: string[] = [];
+  if (counts.completed > 0) parts.push(`${counts.completed} completed`);
+  const open = counts.activated + counts.in_progress;
+  if (open > 0) parts.push(`${open} already open`);
+  const other = counts.abandoned + counts.cancelled;
+  if (other > 0) parts.push(`${other} other`);
+  return parts.length > 0 ? `0 sessions activated: ${parts.join(", ")}.` : "0 sessions activated.";
+}
+
+// ---- Group detail panel -------------------------------------------------------
 
 function GroupDetailPanel({
   groupId,
@@ -118,17 +121,26 @@ function GroupDetailPanel({
   onChanged: () => void;
 }): JSX.Element {
   const [detail, setDetail] = useState<GroupDetailOut | null>(null);
+  const [overview, setOverview] = useState<GroupSessionsOverviewResponse | null>(null);
+  const [selectedKey, setSelectedKey] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [diagnostic, setDiagnostic] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [cisDraft, setCisDraft] = useState<string>("");
 
-  const load = useCallback(() => {
+  const load = useCallback((): void => {
     groupsApi
       .get(groupId)
-      .then((d) => {
-        setDetail(d);
-        setCisDraft(d.current_intervention_session?.toString() ?? "");
+      .then(setDetail)
+      .catch((err: unknown) => setError(errorMessage(err)));
+    groupsApi
+      .sessionsOverview(groupId)
+      .then((ov) => {
+        setOverview(ov);
+        setSelectedKey((prev) => {
+          const first = ov.stages[0];
+          return !prev && first ? stageKey(first) : prev;
+        });
       })
       .catch((err: unknown) => setError(errorMessage(err)));
   }, [groupId]);
@@ -137,20 +149,40 @@ function GroupDetailPanel({
     load();
   }, [load]);
 
-  // MOD-11: refetch member list when window regains focus.
+  // MOD-11: refetch on window focus.
   useEffect(() => {
     window.addEventListener("focus", load);
     return () => window.removeEventListener("focus", load);
   }, [load]);
 
-  async function setCis(value: number | null): Promise<void> {
+  // MOD-12: activate the selected stage.
+  async function activateStage(): Promise<void> {
+    if (!selectedKey) return;
+    const { session_type, intervention_session_number } = parseStageKey(selectedKey);
     setError(null);
+    setDiagnostic(null);
     setSuccess(null);
     setBusy(true);
     try {
-      await groupsApi.update(groupId, { current_intervention_session: value });
-      load();
+      const res = await groupsApi.activate(groupId, { session_type, intervention_session_number });
+      // Always refresh overview for fresh counts.
+      const ov = await groupsApi.sessionsOverview(groupId);
+      setOverview(ov);
+      groupsApi.get(groupId).then(setDetail).catch(() => null);
       onChanged();
+      if (res.activated.length === 0) {
+        // MFR-207: zero-result → diagnostic, never a success banner.
+        const stage = ov.stages.find(
+          (s) => s.session_type === session_type && s.intervention_session_number === intervention_session_number,
+        );
+        setDiagnostic(buildDiagnostic(stage));
+      } else {
+        setSuccess(
+          session_type === "onboarding"
+            ? `Activated ${res.activated.length} onboarding session(s).`
+            : `Activated ${res.activated.length} ${session_type} session(s) for IS ${intervention_session_number ?? "?"}.`,
+        );
+      }
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -158,47 +190,25 @@ function GroupDetailPanel({
     }
   }
 
-  // MOD-8: stage-aware activate (MFR-110..115).
-  async function activateStage(sessionType: SessionStageType): Promise<void> {
+  // MOD-12: deactivate the selected stage, with MFR-208 force-confirm dialog.
+  async function deactivateStage(force: boolean): Promise<void> {
+    if (!selectedKey) return;
+    const { session_type, intervention_session_number } = parseStageKey(selectedKey);
     setError(null);
+    setDiagnostic(null);
     setSuccess(null);
     setBusy(true);
     try {
-      const res = await groupsApi.activate(groupId, sessionType);
-      const cis = detail?.current_intervention_session;
-      if (sessionType === "onboarding") {
-        setSuccess(`Activated ${res.activated.length} onboarding session(s).`);
-      } else if (res.activated.length === 0) {
-        setSuccess(`0 ${sessionType}-session(s) activated for IS ${cis ?? "?"} — none were in an activatable state.`);
-      } else {
-        setSuccess(`Activated ${res.activated.length} ${sessionType}-session(s) for IS ${cis ?? "?"}.`);
-      }
+      const res = await groupsApi.deactivate(groupId, { session_type, intervention_session_number, force });
       load();
       onChanged();
+      setSuccess(
+        session_type === "onboarding"
+          ? `Deactivated ${res.expired.length} onboarding session(s).`
+          : `Deactivated ${res.expired.length} ${session_type} session(s) for IS ${intervention_session_number ?? "?"}.`,
+      );
     } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  // MOD-8: stage-aware deactivate with in-progress confirmation (MFR-114/128).
-  async function deactivateStage(sessionType: SessionStageType, force: boolean): Promise<void> {
-    setError(null);
-    setSuccess(null);
-    setBusy(true);
-    try {
-      const res = await groupsApi.deactivate(groupId, sessionType, force);
-      const cis = detail?.current_intervention_session;
-      if (sessionType === "onboarding") {
-        setSuccess(`Deactivated ${res.expired.length} onboarding session(s).`);
-      } else {
-        setSuccess(`Deactivated ${res.expired.length} ${sessionType}-session(s) for IS ${cis ?? "?"}.`);
-      }
-      load();
-      onChanged();
-    } catch (err) {
-      // MFR-128: soft deactivate returned 409 due to in-progress sessions → confirm dialog.
+      // MFR-208: soft deactivate returned 409 → confirm before force.
       if (!force && err instanceof ApiError && err.status === 409) {
         const detail409 = err.detail as { in_progress_count?: number } | null;
         const count = detail409?.in_progress_count ?? 1;
@@ -207,7 +217,7 @@ function GroupDetailPanel({
         );
         if (confirmed) {
           setBusy(false);
-          await deactivateStage(sessionType, true);
+          await deactivateStage(true);
           return;
         }
       } else {
@@ -222,8 +232,11 @@ function GroupDetailPanel({
     return <ErrorBanner message={error} />;
   }
 
-  const cis = detail.current_intervention_session;
-  const noIs = cis == null;
+  // Derived state for activation section (MFR-205).
+  const hasStages = overview !== null && overview.stages.length > 0;
+  const selectedStage = overview?.stages.find((s) => stageKey(s) === selectedKey) ?? null;
+  const nActivatable = selectedStage ? selectedStage.counts.created + selectedStage.counts.expired : 0;
+  const activateHint = selectedStage && nActivatable === 0 ? buildActivateHint(selectedStage.counts) : null;
 
   return (
     <div className="space-y-4 rounded-lg border border-gray-200 bg-white p-4">
@@ -238,72 +251,62 @@ function GroupDetailPanel({
       <ErrorBanner message={error} />
       <SuccessBanner message={success} />
 
-      {/* MFR-23: IS editor with caption (MFR-119). */}
-      <div className="space-y-1">
-        <div className="flex flex-wrap items-end gap-3">
-          <Field label="Current intervention session (IS)" hint="IS = Intervention Session. Display-only counter (1–52).">
-            <input
-              type="number"
-              className={`${inputClass} w-32`}
-              min={1}
-              max={52}
-              value={cisDraft}
-              onChange={(e) => setCisDraft(e.target.value)}
-            />
-          </Field>
-          <Button
-            variant="secondary"
-            disabled={busy}
-            onClick={() => void setCis(cisDraft.trim() === "" ? null : Number(cisDraft))}
-          >
-            Save
-          </Button>
-          <Button
-            variant="secondary"
-            disabled={busy || (cis ?? 0) >= 52}
-            onClick={() => void setCis((cis ?? 0) + 1)}
-          >
-            +1
-          </Button>
-        </div>
-      </div>
-
-      {/* MFR-124: unified stage panel (Onboarding / Pre / Post). */}
+      {/* MFR-201/MFR-204/MFR-206: named session selector + action buttons. */}
       <div className="space-y-2">
         <h4 className="text-sm font-medium text-gray-700">Session activation</h4>
-        {/* MFR-120: soft-vs-force helper text (verbatim). */}
-        <p className="text-xs text-gray-500">{FORCE_DEACTIVATE_HELPER}</p>
-        <div className="space-y-2">
-          <StageRow
-            label="Onboarding"
-            sessionType="onboarding"
-            disabled={false}
-            busy={busy}
-            onActivate={(st) => void activateStage(st)}
-            onDeactivate={(st, f) => void deactivateStage(st, f)}
-          />
-          <StageRow
-            label={`Pre${cis != null ? ` (IS ${cis})` : ""}`}
-            sessionType="pre"
-            disabled={noIs}
-            hint="Set an Intervention Session number to activate pre/post sessions."
-            busy={busy}
-            onActivate={(st) => void activateStage(st)}
-            onDeactivate={(st, f) => void deactivateStage(st, f)}
-          />
-          <StageRow
-            label={`Post${cis != null ? ` (IS ${cis})` : ""}`}
-            sessionType="post"
-            disabled={noIs}
-            hint="Set an Intervention Session number to activate pre/post sessions."
-            busy={busy}
-            onActivate={(st) => void activateStage(st)}
-            onDeactivate={(st, f) => void deactivateStage(st, f)}
-          />
+        <div className="flex flex-wrap items-center gap-2">
+          {/* MFR-202/MFR-203: selector populated from sessions-overview. */}
+          <select
+            className={selectClass}
+            value={selectedKey}
+            onChange={(e) => { setSelectedKey(e.target.value); setDiagnostic(null); }}
+            disabled={!hasStages || busy}
+          >
+            {!hasStages && (
+              <option value="" disabled>
+                No sessions found — generate protocol sessions for group members first
+              </option>
+            )}
+            {(overview?.stages ?? []).map((s) => (
+              <option key={stageKey(s)} value={stageKey(s)}>
+                {s.display_label}
+              </option>
+            ))}
+          </select>
+          {/* MFR-204: three action buttons. */}
+          <Button
+            variant="secondary"
+            disabled={busy || !selectedKey || !hasStages || nActivatable === 0}
+            onClick={() => void activateStage()}
+          >
+            Activate
+          </Button>
+          <Button
+            variant="secondary"
+            disabled={busy || !selectedKey || !hasStages}
+            onClick={() => void deactivateStage(false)}
+          >
+            Deactivate
+          </Button>
+          <Button
+            variant="secondary"
+            disabled={busy || !selectedKey || !hasStages}
+            onClick={() => void deactivateStage(true)}
+          >
+            Force deactivate
+          </Button>
         </div>
+        {/* MFR-205: hint when no activatable sessions. */}
+        {activateHint && <p className="text-xs text-amber-700">{activateHint}</p>}
+        {/* MFR-207: diagnostic instead of success banner on zero-activation. */}
+        {diagnostic && (
+          <p className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            {diagnostic}
+          </p>
+        )}
       </div>
 
-      {/* MFR-25: per-group completion counts. */}
+      {/* MFR-25 / MFR-126: per-group completion counts. */}
       <div className="grid grid-cols-2 gap-2 text-sm text-gray-700 sm:grid-cols-3">
         <div>Completed pre (overall): {detail.completion.completed_pre_overall}</div>
         <div>Completed post (overall): {detail.completion.completed_post_overall}</div>

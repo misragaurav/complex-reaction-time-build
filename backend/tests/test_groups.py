@@ -330,14 +330,9 @@ def test_activate_onboarding_blocked_by_open_pre(
 ) -> None:
     """MAC-113: global guard — activated pre session blocks onboarding activation."""
     study, parts, g = _setup_group_with_protocol(client, researcher_headers, num_members=1)
-    client.patch(
-        f"/api/v1/groups/{g['id']}",
-        json={"current_intervention_session": 1},
-        headers=researcher_headers,
-    )
     activate_resp = client.post(
         f"/api/v1/groups/{g['id']}/activate",
-        json={"session_type": "pre"},
+        json={"session_type": "pre", "intervention_session_number": 1},
         headers=researcher_headers,
     )
     assert activate_resp.status_code == 200, activate_resp.text
@@ -359,16 +354,16 @@ def test_activate_onboarding_blocked_by_open_pre(
 def test_activate_pre_requires_is(
     client: TestClient, researcher_headers: dict[str, str]
 ) -> None:
-    """MAC-112: activating pre/post without IS set returns 422."""
+    """MAC-112/MFR-216: activating pre without intervention_session_number returns 422."""
     study, parts, g = _setup_group_with_protocol(client, researcher_headers, num_members=1)
-    # IS is null (not set).
     resp = client.post(
         f"/api/v1/groups/{g['id']}/activate",
         json={"session_type": "pre"},
         headers=researcher_headers,
     )
     assert resp.status_code == 422, resp.text
-    assert "current_intervention_session" in resp.json()["detail"]
+    # Error must mention intervention_session_number (from model_validator).
+    assert "intervention_session_number" in str(resp.json()["detail"])
 
 
 def test_deactivate_force_leaves_in_progress(
@@ -384,15 +379,10 @@ def test_deactivate_force_leaves_in_progress(
     assert resp.status_code == 200, resp.text
     p_headers = {"Authorization": f"Bearer {resp.json()['access_token']}"}
 
-    # Set IS=1 and group-activate pre for all members.
-    client.patch(
-        f"/api/v1/groups/{g['id']}",
-        json={"current_intervention_session": 1},
-        headers=researcher_headers,
-    )
+    # Group-activate pre IS=1 for all members.
     activate_resp = client.post(
         f"/api/v1/groups/{g['id']}/activate",
-        json={"session_type": "pre"},
+        json={"session_type": "pre", "intervention_session_number": 1},
         headers=researcher_headers,
     )
     assert activate_resp.status_code == 200, activate_resp.text
@@ -414,7 +404,7 @@ def test_deactivate_force_leaves_in_progress(
     # Soft deactivate → 409 because one session is in_progress.
     resp = client.post(
         f"/api/v1/groups/{g['id']}/deactivate",
-        json={"session_type": "pre"},
+        json={"session_type": "pre", "intervention_session_number": 1},
         headers=researcher_headers,
     )
     assert resp.status_code == 409, resp.text
@@ -425,7 +415,7 @@ def test_deactivate_force_leaves_in_progress(
     # Force deactivate → 200; activated sessions expire, in_progress stays.
     resp = client.post(
         f"/api/v1/groups/{g['id']}/deactivate",
-        json={"session_type": "pre", "force": True},
+        json={"session_type": "pre", "intervention_session_number": 1, "force": True},
         headers=researcher_headers,
     )
     assert resp.status_code == 200, resp.text
@@ -441,3 +431,272 @@ def test_deactivate_force_leaves_in_progress(
     ).json()
     still_in_progress = next(s for s in updated if s["id"] == pre_s["id"])
     assert still_in_progress["status"] == "in_progress"
+
+
+# ---- MOD-12 (MFR-215/MFR-216): name-based activation tests ------------------
+
+
+def test_activate_name_based_not_counter_based(
+    client: TestClient, researcher_headers: dict[str, str]
+) -> None:
+    """MAC-215/MFR-215: regression — activate uses explicit IS from request, not group counter."""
+    study, parts, g = _setup_group_with_protocol(client, researcher_headers, num_members=2)
+
+    # Step 2: set group counter to 99 (no sessions at IS 99 exist) — simulate misaligned state.
+    client.patch(
+        f"/api/v1/groups/{g['id']}",
+        json={"current_intervention_session": 99},
+        headers=researcher_headers,
+    )
+
+    # Step 3: call activate with explicit IS=1 (request IS=1 != group counter 99).
+    # OLD code: used counter=99, found no sessions, returned activated:[].
+    # NEW code: uses payload.intervention_session_number=1, activates IS-1 sessions.
+    resp = client.post(
+        f"/api/v1/groups/{g['id']}/activate",
+        json={"session_type": "pre", "intervention_session_number": 1},
+        headers=researcher_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    body: dict[str, Any] = resp.json()
+
+    # Step 4: both IS-1 pre sessions activated; counter side-effect updates to 1.
+    assert len(body["activated"]) == 2, f"expected 2 activated, got: {body}"
+    for item in body["activated"]:
+        assert item["session_type"] == "pre"
+    detail = client.get(f"/api/v1/groups/{g['id']}", headers=researcher_headers).json()
+    assert detail["current_intervention_session"] == 1
+
+    # Steps 5-6: activate IS-1 again (sessions now 'activated', not 'created'/'expired').
+    # Side effect fires; zero result does not error.
+    resp2 = client.post(
+        f"/api/v1/groups/{g['id']}/activate",
+        json={"session_type": "pre", "intervention_session_number": 1},
+        headers=researcher_headers,
+    )
+    assert resp2.status_code == 409, resp2.text  # global guard: IS-1 pre still activated
+
+
+def test_activate_request_pre_without_is_number_returns_422(
+    client: TestClient, researcher_headers: dict[str, str]
+) -> None:
+    """MFR-216: pre without intervention_session_number → 422."""
+    study, parts, g = _setup_group_with_protocol(client, researcher_headers, num_members=1)
+    resp = client.post(
+        f"/api/v1/groups/{g['id']}/activate",
+        json={"session_type": "pre"},
+        headers=researcher_headers,
+    )
+    assert resp.status_code == 422, resp.text
+    assert "intervention_session_number" in str(resp.json()["detail"])
+
+
+def test_activate_request_post_without_is_number_returns_422(
+    client: TestClient, researcher_headers: dict[str, str]
+) -> None:
+    """MFR-216: post with intervention_session_number=null → 422."""
+    study, parts, g = _setup_group_with_protocol(client, researcher_headers, num_members=1)
+    resp = client.post(
+        f"/api/v1/groups/{g['id']}/activate",
+        json={"session_type": "post", "intervention_session_number": None},
+        headers=researcher_headers,
+    )
+    assert resp.status_code == 422, resp.text
+    assert "intervention_session_number" in str(resp.json()["detail"])
+
+
+def test_activate_request_onboarding_ignores_is_number(
+    client: TestClient, researcher_headers: dict[str, str]
+) -> None:
+    """MFR-216 / D-12.4: onboarding with non-null IS is coerced to null; activates correctly."""
+    study, parts, g = _setup_group_with_protocol(client, researcher_headers, num_members=1)
+    resp = client.post(
+        f"/api/v1/groups/{g['id']}/activate",
+        json={"session_type": "onboarding", "intervention_session_number": 3},
+        headers=researcher_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    body: dict[str, Any] = resp.json()
+    assert len(body["activated"]) == 1
+    assert body["activated"][0]["session_type"] == "onboarding"
+
+
+def test_activate_onboarding_no_is_required(
+    client: TestClient, researcher_headers: dict[str, str]
+) -> None:
+    """MFR-216: onboarding with no IS (null counter) → 200."""
+    study, parts, g = _setup_group_with_protocol(client, researcher_headers, num_members=1)
+    # Group counter is None (never set by _setup_group_with_protocol).
+    resp = client.post(
+        f"/api/v1/groups/{g['id']}/activate",
+        json={"session_type": "onboarding"},
+        headers=researcher_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert len(resp.json()["activated"]) == 1
+
+
+def test_current_is_side_effect_pre_activate(
+    client: TestClient, researcher_headers: dict[str, str]
+) -> None:
+    """MFR-216 / MFR-212: activate pre IS=3 sets group.current_intervention_session = 3."""
+    study, parts, g = _setup_group_with_protocol(
+        client, researcher_headers, num_members=1
+    )
+    resp = client.post(
+        f"/api/v1/groups/{g['id']}/activate",
+        json={"session_type": "pre", "intervention_session_number": 3},
+        headers=researcher_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    detail = client.get(f"/api/v1/groups/{g['id']}", headers=researcher_headers).json()
+    assert detail["current_intervention_session"] == 3
+
+
+def test_current_is_side_effect_pre_deactivate(
+    client: TestClient, researcher_headers: dict[str, str]
+) -> None:
+    """MFR-216 / MFR-212: deactivate pre IS=3 sets group.current_intervention_session = 3."""
+    study, parts, g = _setup_group_with_protocol(
+        client, researcher_headers, num_members=1
+    )
+    # Activate IS-3 pre first (so there's something to deactivate).
+    client.post(
+        f"/api/v1/groups/{g['id']}/activate",
+        json={"session_type": "pre", "intervention_session_number": 3},
+        headers=researcher_headers,
+    )
+    # Now deactivate IS-3 pre (counter currently 3 from above).
+    # Set counter to 1 via patch to verify deactivate overrides it.
+    client.patch(
+        f"/api/v1/groups/{g['id']}",
+        json={"current_intervention_session": 1},
+        headers=researcher_headers,
+    )
+    resp = client.post(
+        f"/api/v1/groups/{g['id']}/deactivate",
+        json={"session_type": "pre", "intervention_session_number": 3},
+        headers=researcher_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    detail = client.get(f"/api/v1/groups/{g['id']}", headers=researcher_headers).json()
+    assert detail["current_intervention_session"] == 3
+
+
+def test_current_is_not_updated_for_onboarding(
+    client: TestClient, researcher_headers: dict[str, str]
+) -> None:
+    """MFR-216 / MFR-212: onboarding activate/deactivate does not change group IS counter."""
+    study, parts, g = _setup_group_with_protocol(client, researcher_headers, num_members=1)
+    client.patch(
+        f"/api/v1/groups/{g['id']}",
+        json={"current_intervention_session": 7},
+        headers=researcher_headers,
+    )
+    resp = client.post(
+        f"/api/v1/groups/{g['id']}/activate",
+        json={"session_type": "onboarding"},
+        headers=researcher_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    detail = client.get(f"/api/v1/groups/{g['id']}", headers=researcher_headers).json()
+    assert detail["current_intervention_session"] == 7  # unchanged
+
+
+def test_sessions_overview_endpoint(
+    client: TestClient, researcher_headers: dict[str, str]
+) -> None:
+    """MFR-216 / MAC-201: sessions-overview returns stages ordered by order_index."""
+    from app.services.protocol import compute_display_label as cdl
+
+    study, parts, g = _setup_group_with_protocol(client, researcher_headers, num_members=2)
+    resp = client.get(f"/api/v1/groups/{g['id']}/sessions-overview", headers=researcher_headers)
+    assert resp.status_code == 200, resp.text
+    body: dict[str, Any] = resp.json()
+    stages = body["stages"]
+
+    # _setup_group_with_protocol: num_intervention_sessions=3, sessions_per_week=3
+    # → 1 onboarding + 3 pre + 3 post = 7 stages
+    assert len(stages) == 7, f"expected 7 stages, got {stages}"
+
+    # First stage: onboarding (order_index=1).
+    s0 = stages[0]
+    assert s0["session_type"] == "onboarding"
+    assert s0["intervention_session_number"] is None
+    assert s0["display_label"] == "Onboarding"
+    assert s0["order_index"] == 1
+    assert s0["member_total"] == 2
+
+    # All seven status keys present with 0 except 'created'.
+    expected_keys = {"created", "expired", "activated", "in_progress", "completed", "abandoned", "cancelled"}
+    for st in stages:
+        assert set(st["counts"].keys()) == expected_keys, f"wrong count keys: {st}"
+        assert st["counts"]["created"] == st["member_total"]
+
+    # Ordered by order_index ascending.
+    order_indices = [s["order_index"] for s in stages]
+    assert order_indices == sorted(order_indices)
+
+    # Second stage: pre IS=1; display_label matches compute_display_label.
+    s1 = stages[1]
+    assert s1["session_type"] == "pre"
+    assert s1["intervention_session_number"] == 1
+    assert s1["display_label"] == cdl("pre", s1["week_number"], s1["day_within_week"])
+
+
+def test_sessions_overview_empty_for_no_protocol(
+    client: TestClient, researcher_headers: dict[str, str]
+) -> None:
+    """MFR-216: sessions-overview returns stages:[] when no sessions generated."""
+    study = _study(client, researcher_headers)
+    parts = _participants(client, researcher_headers, study["id"], 1)
+    g = _group(client, researcher_headers, study["id"], "No Protocol")
+    client.post(
+        f"/api/v1/groups/{g['id']}/assign",
+        json={"participant_ids": [parts[0]["id"]]},
+        headers=researcher_headers,
+    )
+    resp = client.get(f"/api/v1/groups/{g['id']}/sessions-overview", headers=researcher_headers)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["stages"] == []
+
+
+def test_global_guard_still_enforced(
+    client: TestClient, researcher_headers: dict[str, str]
+) -> None:
+    """MFR-216 / MFR-115: global guard blocks activation when member has open session."""
+    study, parts, g = _setup_group_with_protocol(client, researcher_headers, num_members=1)
+    # Activate IS-1 pre.
+    activate_resp = client.post(
+        f"/api/v1/groups/{g['id']}/activate",
+        json={"session_type": "pre", "intervention_session_number": 1},
+        headers=researcher_headers,
+    )
+    assert activate_resp.status_code == 200
+    assert len(activate_resp.json()["activated"]) >= 1
+
+    # Try activating IS-1 post → 409 (member has open IS-1 pre).
+    resp = client.post(
+        f"/api/v1/groups/{g['id']}/activate",
+        json={"session_type": "post", "intervention_session_number": 1},
+        headers=researcher_headers,
+    )
+    assert resp.status_code == 409, resp.text
+    detail: Any = resp.json()["detail"]
+    assert isinstance(detail, dict)
+    assert "blocking" in detail
+    assert len(detail["blocking"]) >= 1
+
+
+def test_activate_is_range_validation(
+    client: TestClient, researcher_headers: dict[str, str]
+) -> None:
+    """MAC-209: intervention_session_number must be in [1, 156]."""
+    study, parts, g = _setup_group_with_protocol(client, researcher_headers, num_members=1)
+    for bad_is in (0, 157):
+        resp = client.post(
+            f"/api/v1/groups/{g['id']}/activate",
+            json={"session_type": "pre", "intervention_session_number": bad_is},
+            headers=researcher_headers,
+        )
+        assert resp.status_code == 422, f"expected 422 for IS={bad_is}, got {resp.status_code}"
