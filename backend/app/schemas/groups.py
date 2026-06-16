@@ -6,7 +6,7 @@ import datetime
 import uuid
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class GroupCreate(BaseModel):
@@ -93,13 +93,25 @@ class GroupAssignResponse(BaseModel):
     blocked: list[BlockedItem]
 
 
-# MOD-5: group activation/deactivation schemas (MFR-31/32).
-# MOD-8: session_type extended to include "onboarding" (MFR-110).
+# MOD-5/MOD-8/MOD-12: group activation/deactivation schemas.
 
 class GroupActivateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     session_type: Literal["onboarding", "pre", "post"] = "pre"
+    # MOD-12 (MFR-209): explicit IS; replaces server-side counter lookup.
+    intervention_session_number: int | None = Field(default=None, ge=1, le=156)
+
+    @model_validator(mode="after")
+    def _check_is(self) -> "GroupActivateRequest":
+        if self.session_type in ("pre", "post") and self.intervention_session_number is None:
+            raise ValueError(
+                "intervention_session_number is required when session_type is 'pre' or 'post'"
+            )
+        if self.session_type == "onboarding" and self.intervention_session_number is not None:
+            # D-12.4: silently coerce to null for onboarding.
+            self.intervention_session_number = None
+        return self
 
 
 class GroupActivatedItem(BaseModel):
@@ -131,6 +143,18 @@ class GroupDeactivateRequest(BaseModel):
     # MOD-8: session_type mirrors GroupActivateRequest (MFR-110).
     session_type: Literal["onboarding", "pre", "post"] = "pre"
     force: bool = False
+    # MOD-12 (MFR-210): explicit IS; same rules as GroupActivateRequest.
+    intervention_session_number: int | None = Field(default=None, ge=1, le=156)
+
+    @model_validator(mode="after")
+    def _check_is(self) -> "GroupDeactivateRequest":
+        if self.session_type in ("pre", "post") and self.intervention_session_number is None:
+            raise ValueError(
+                "intervention_session_number is required when session_type is 'pre' or 'post'"
+            )
+        if self.session_type == "onboarding" and self.intervention_session_number is not None:
+            self.intervention_session_number = None
+        return self
 
 
 class GroupExpiredItem(BaseModel):
@@ -143,3 +167,30 @@ class GroupExpiredItem(BaseModel):
 class GroupDeactivateResponse(BaseModel):
     expired: list[GroupExpiredItem]
     in_progress_count: int
+
+
+# MOD-12 (MFR-214): sessions-overview response schemas.
+
+class StageStatusCounts(BaseModel):
+    created: int
+    expired: int
+    activated: int
+    in_progress: int
+    completed: int
+    abandoned: int
+    cancelled: int
+
+
+class StageOverview(BaseModel):
+    session_type: str
+    intervention_session_number: int | None
+    display_label: str
+    week_number: int | None
+    day_within_week: int | None
+    order_index: int
+    member_total: int
+    counts: StageStatusCounts
+
+
+class GroupSessionsOverviewResponse(BaseModel):
+    stages: list[StageOverview]

@@ -4,7 +4,6 @@
 
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useState } from "react";
 import { usePersistentState } from "../src/hooks/usePersistentState";
 import StudySessionsTab from "../src/pages/StudySessionsTab";
 import type { StudyOut } from "../src/api/types";

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { usePersistentState } from "../hooks/usePersistentState";
 import {
   Bar,
   BarChart,
@@ -607,6 +608,11 @@ function SessionsTable({
 
 // ---- the tab -----------------------------------------------------------------
 
+// MOD-13 (MFR-220): persisted Dashboard tab preferences.
+interface DashboardTabPrefs {
+  sessionsTableCollapsed: boolean;
+}
+
 export default function StudyDashboardTab({ study }: { study: StudyOut }): JSX.Element {
   const [summary, setSummary] = useState<StudySummaryOut | null>(null);
   const [allSessions, setAllSessions] = useState<SessionOut[] | null>(null);
@@ -615,6 +621,27 @@ export default function StudyDashboardTab({ study }: { study: StudyOut }): JSX.E
   const [participantFilter, setParticipantFilter] = useState("");
   const [sort, setSort] = useState<SessionSort>("participant_code");
   const [error, setError] = useState<string | null>(null);
+
+  // MOD-13 (MFR-218/220/221): collapsible Sessions table, persisted per study.
+  const [prefs, setPrefs] = usePersistentState<DashboardTabPrefs>(
+    `crt.dashboardTab.prefs.${study.id}`,
+    { sessionsTableCollapsed: false },
+    {
+      validate: (raw: unknown): DashboardTabPrefs | null => {
+        if (
+          typeof raw === "object" &&
+          raw !== null &&
+          "sessionsTableCollapsed" in raw &&
+          typeof (raw as Record<string, unknown>).sessionsTableCollapsed === "boolean"
+        ) {
+          return raw as DashboardTabPrefs;
+        }
+        return null;
+      },
+    },
+  );
+  const isCollapsed = prefs.sessionsTableCollapsed;
+  const setCollapsed = (v: boolean): void => setPrefs({ ...prefs, sessionsTableCollapsed: v });
 
   const studySlug = slugify(study.name);
 
@@ -702,17 +729,35 @@ export default function StudyDashboardTab({ study }: { study: StudyOut }): JSX.E
         </section>
       )}
 
-      <SessionsTable
-        studySlug={studySlug}
-        sessions={tableSessions}
-        participantCodes={participantCodes}
-        statusFilter={statusFilter}
-        participantFilter={participantFilter}
-        sort={sort}
-        onStatusFilter={setStatusFilter}
-        onParticipantFilter={setParticipantFilter}
-        onSort={setSort}
-      />
+      {/* MFR-218: collapsible Sessions table section (MOD-13). */}
+      <section>
+        <button
+          type="button"
+          onClick={() => setCollapsed(!isCollapsed)}
+          aria-expanded={!isCollapsed}
+          aria-controls="dashboard-sessions-table-body"
+          className="flex w-full items-center justify-between gap-2 rounded-lg border border-gray-200 bg-white px-4 py-3 text-left text-sm font-medium text-gray-900 hover:bg-gray-50"
+        >
+          <span>Sessions</span>
+          <span aria-hidden="true">{isCollapsed ? "▶" : "▼"}</span>
+        </button>
+        <div id="dashboard-sessions-table-body">
+          {/* MFR-219/222: conditional render; fetch continues regardless of state. */}
+          {!isCollapsed && (
+            <SessionsTable
+              studySlug={studySlug}
+              sessions={tableSessions}
+              participantCodes={participantCodes}
+              statusFilter={statusFilter}
+              participantFilter={participantFilter}
+              sort={sort}
+              onStatusFilter={setStatusFilter}
+              onParticipantFilter={setParticipantFilter}
+              onSort={setSort}
+            />
+          )}
+        </div>
+      </section>
 
       {summary && (
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">

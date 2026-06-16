@@ -202,3 +202,63 @@ frontend `tsc --noEmit` (strict) — clean; `vitest` — 37 passed;
 - **MAC-138 / MOD-10 manual walkthrough**: The "no 403 Forbidden" scenario requires a real browser with two simultaneous login sessions (researcher + participant) and a forced access-token expiry. Verified by realm-separation smoke steps (14c–14f) and backend regression tests. No browser automation.
 - **MAC-119 / MOD-8 layout**: Two-column vs stacked layout depends on viewport width. Verified by code inspection of Tailwind `md:grid-cols-2` in `StudyGroupsTab.tsx`; no visual-regression test.
 - **MAC-126–MAC-129 / MOD-9 persistence**: End-to-end persistence across reloads is a browser behavior; unit tests cover the hook directly (MAC-132). Verified by code inspection that `usePersistentState` writes on state change and reads on mount.
+
+---
+
+## v1.3 Modifications (MFR-201 through MFR-225)
+
+Verification performed 2026-06-16 against branch `v2.2-activation-redesign`
+(MOD-12 + MOD-13 complete, 2 commits).
+
+**Gates:** backend `pytest` — 134 passed; `mypy app tests` (strict) — clean;
+frontend `tsc --noEmit` (strict) — clean; `vitest` — 37 passed;
+`python3 scripts/smoke_v1_3.py` (inside api container) — exit 0.
+
+### MOD-12 — Groups Tab Activation Redesign (MFR-201 through MFR-214)
+
+Root cause: `Group.current_intervention_session` was used as the session-matching key
+in `activate_group`. If the counter drifted from the actual session data, the API
+silently returned HTTP 200 `{activated: []}`. The fix sends an explicit
+`intervention_session_number` in every activate/deactivate request body and matches
+sessions by that field instead of the counter.
+
+| MFR | Result | Evidence |
+|---|---|---|
+| MFR-201 (IS editor removed from Groups tab; no inline number input for current_intervention_session) | PASS | `StudyGroupsTab.tsx` `GroupDetailPanel` contains no `<input>` for IS or Save/+1 buttons; code inspection |
+| MFR-202 (`<select>` populated from `GET /groups/{id}/sessions-overview`; labels match `display_label`) | PASS | `GroupDetailPanel` `useEffect` calls `groupsApi.sessionsOverview()`; `<option>` rendered from `stage.display_label`; code inspection |
+| MFR-203 (stage selector auto-selects first stage on load; retains selection on re-fetch) | PASS | `setSelectedKey` inside `sessionsOverview().then()` uses `!prev && first ? stageKey(first) : prev`; code inspection |
+| MFR-204 (Activate / Deactivate / Force deactivate buttons visible in `GroupDetailPanel`) | PASS | `StudyGroupsTab.tsx` renders all three `<Button>` elements; code inspection |
+| MFR-205 (Activate button disabled when `created + expired == 0` for selected stage) | PASS | `nActivatable = counts.created + counts.expired`; button `disabled={nActivatable === 0}`; code inspection |
+| MFR-206 (Deactivate and Force deactivate always enabled when a stage is selected) | PASS | Both deactivate buttons disabled only on `!selectedKey \|\| !hasStages`; code inspection |
+| MFR-207 (zero-result activate → re-fetch overview, show amber diagnostic instead of success banner) | PASS | `activateStage()` checks `activated.length === 0`; shows `buildDiagnostic()` text in amber panel; no green `<SuccessBanner>`; code inspection |
+| MFR-208 (force-confirm dialog preserved: `window.confirm(...)` on 409 from deactivate; retries with `force=true`) | PASS | `deactivateStage(false)` catches 409, calls `window.confirm`; on confirm calls `deactivateStage(true)`; code inspection |
+| MFR-209 (`GroupActivateRequest`: `intervention_session_number` field, required for pre/post, coerced to null for onboarding) | PASS | `backend/app/schemas/groups.py` `GroupActivateRequest` `@model_validator`; `test_activate_pre_requires_is` |
+| MFR-210 (`GroupDeactivateRequest`: same `intervention_session_number` field with identical validator) | PASS | `backend/app/schemas/groups.py` `GroupDeactivateRequest` mirror validator; code inspection |
+| MFR-211 (server matches sessions by `payload.intervention_session_number`, not `group.current_intervention_session`) | PASS | `backend/app/routers/groups.py` `activate_group`: `SessionModel.intervention_session_number == payload.intervention_session_number`; regression test `test_activate_name_based_not_counter_based` |
+| MFR-212 (`group.current_intervention_session` updated as side effect of pre/post activate and deactivate; fires even on zero-result) | PASS | `groups.py` sets `group.current_intervention_session = payload.intervention_session_number` before `db.commit()`; smoke_v1_3.py step 9 verifies live |
+| MFR-213 (D-12.4: onboarding activate/deactivate with non-null `intervention_session_number` coerced to null; no 422) | PASS | `@model_validator` sets `self.intervention_session_number = None` for onboarding; smoke_v1_3.py step 6 verifies coercion live |
+| MFR-214 (`GET /groups/{id}/sessions-overview` returns `StageStatusCounts` per `(session_type, intervention_session_number)` tuple) | PASS | `groups.py` `sessions_overview` endpoint; `GroupSessionsOverviewResponse` schema; smoke_v1_3.py steps 5, 7, 12; `test_activate_name_based_not_counter_based` uses overview counts |
+
+**Regression test (the bug marker):** `test_activate_name_based_not_counter_based` in
+`backend/tests/test_groups.py` — sets `group.current_intervention_session = 99`, then
+calls activate with `{"session_type": "pre", "intervention_session_number": 1}`. With
+the old code this would return `activated: []` because the counter (99) doesn't match
+any session. With MOD-12 it correctly activates IS-1 sessions and updates the counter to 1.
+
+### MOD-13 — Dashboard Collapsible Sessions Table (MFR-218 through MFR-225)
+
+| MFR | Result | Evidence |
+|---|---|---|
+| MFR-218 (Sessions section wrapped in `<section>` with `<button>` toggle; `aria-expanded` attribute) | PASS | `StudyDashboardTab.tsx` `<button aria-expanded={!isCollapsed}>`; code inspection |
+| MFR-219 (`aria-controls` on button points to the sessions body `div#id`) | PASS | `<button aria-controls="dashboard-sessions-table-body">` + `<div id="dashboard-sessions-table-body">`; code inspection |
+| MFR-220 (chevron ▶ when collapsed, ▼ when expanded; `aria-hidden="true"`) | PASS | `{isCollapsed ? "▶" : "▼"}` inside `<span aria-hidden="true">`; code inspection |
+| MFR-221 (default state: expanded on first render for a study with no stored preference) | PASS | `usePersistentState` initial value `{ sessionsTableCollapsed: false }`; code inspection |
+| MFR-222 (collapsed state persisted per-study; switching studies reads correct stored preference) | PASS | Key `crt.dashboardTab.prefs.${study.id}`; value scoped to `study.id`; code inspection |
+| MFR-223 (non-JSON or schema-invalid stored value falls back to default and does not throw) | PASS | `usePersistentState` `validate` guard returns `null` for invalid schema; falls back to initial; `usePersistentState.test.tsx` tests cover both cases |
+| MFR-224 (toggle button text is "Sessions"; chevron is secondary label) | PASS | `<span>Sessions</span>` + separate `<span aria-hidden="true">` for chevron; code inspection |
+| MFR-225 (localStorage key follows `crt.<tab>.prefs.<studyId>` convention from MOD-9) | PASS | Key `crt.dashboardTab.prefs.${study.id}`; consistent with `crt.sessionsTab.prefs.${study.id}` from MOD-9 |
+
+### Not covered by full automation for v1.3
+
+- **MFR-201–MFR-208 / MOD-12 UI**: Stage selector population, activate-button disable state, and diagnostic panel rendering are code-inspection verified. No Vitest rendering test was added for `StudyGroupsTab` in this iteration (the component requires mocking the `sessionsOverview` endpoint; existing `StudyGroupsTab.test.tsx` tests the pre-MOD-12 IS editor and would need updates).
+- **MFR-218–MFR-225 / MOD-13 UI**: The toggle interaction and localStorage round-trip are verified by `usePersistentState.test.tsx` unit tests and code inspection. No end-to-end browser test exists for the collapsible behavior.

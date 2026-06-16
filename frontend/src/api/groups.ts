@@ -9,6 +9,7 @@ import type {
   GroupDeactivateResponse,
   GroupDetailOut,
   GroupOut,
+  GroupSessionsOverviewResponse,
   GroupUpdate,
 } from "./types";
 
@@ -23,18 +24,29 @@ export const groupsApi = {
   remove: (groupId: string): Promise<void> => api.delete<void>(`/groups/${groupId}`),
   assign: (groupId: string, payload: GroupAssignRequest): Promise<GroupAssignResponse> =>
     api.post<GroupAssignResponse>(`/groups/${groupId}/assign`, payload),
-  // MOD-5/MOD-8: group-level activation (MFR-31/32/110).
-  activate: (groupId: string, sessionType: "onboarding" | "pre" | "post" = "pre"): Promise<GroupActivateResponse> =>
+  // MOD-12 (MFR-209/210): name-based activation with explicit intervention_session_number.
+  activate: (
+    groupId: string,
+    payload: { session_type: "onboarding" | "pre" | "post"; intervention_session_number: number | null },
+  ): Promise<GroupActivateResponse> =>
     api.post<GroupActivateResponse>(`/groups/${groupId}/activate`, {
-      session_type: sessionType,
+      session_type: payload.session_type,
+      intervention_session_number: payload.intervention_session_number,
     } satisfies GroupActivateRequest),
   deactivate: (
     groupId: string,
-    sessionType: "onboarding" | "pre" | "post" = "pre",
-    force = false,
+    payload: {
+      session_type: "onboarding" | "pre" | "post";
+      intervention_session_number: number | null;
+      force?: boolean;
+    },
   ): Promise<GroupDeactivateResponse> =>
     api.post<GroupDeactivateResponse>(`/groups/${groupId}/deactivate`, {
-      session_type: sessionType,
-      force,
+      session_type: payload.session_type,
+      intervention_session_number: payload.intervention_session_number,
+      force: payload.force ?? false,
     } satisfies GroupDeactivateRequest),
+  // MOD-12 (MFR-214): per-stage session status counts.
+  sessionsOverview: (groupId: string): Promise<GroupSessionsOverviewResponse> =>
+    api.get<GroupSessionsOverviewResponse>(`/groups/${groupId}/sessions-overview`),
 };
